@@ -22,7 +22,10 @@ open-drain interface; Raspberry Pi reports it fixed in A4. See the
 3. Select the COM port, ITE, the EC family, and the two GPIO numbers.
 4. Click **Connect to EC**. If asked, remove target power for about five
    seconds and reconnect it while keeping the Pico attached.
-5. Use **Read** to save a backup. **Write (Erase + Write)** selects an image,
+5. Choose **Read size**. Auto uses a recognized capacity; otherwise select
+   64, 128, or 256 KiB to read from address 0. A manual size does not prove
+   the target's full flash capacity. Use **Read** to save the result.
+   **Write (Erase + Write)** selects an image,
    erases, writes, and verifies it. **Erase** erases without writing.
 
 The displayed CHIPID and CHIPVER are numeric protocol values. The GUI cannot

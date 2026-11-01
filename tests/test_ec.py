@@ -51,5 +51,23 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaises(ValueError): ECProbe(bus).read_flash(7)
         self.assertFalse(bus.writes)
 
+    def test_page_reader_stops_at_selected_capacity(self):
+        class PageBus:
+            def __init__(self):
+                self.addresses = []
+
+            def read_page(self, address):
+                self.addresses.append(address)
+                return bytes(256)
+
+        for size in (64 * 1024, 128 * 1024):
+            with self.subTest(size=size):
+                bus = PageBus()
+                data = ECProbe(bus, page_mode=True).read_flash(size)
+                self.assertEqual(len(data), size)
+                self.assertEqual(bus.addresses[0], 0)
+                self.assertEqual(bus.addresses[-1], size - 256)
+                self.assertEqual(len(bus.addresses), size // 256)
+
 
 if __name__ == "__main__": unittest.main()

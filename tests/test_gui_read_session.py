@@ -5,7 +5,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app.gui import Worker
+from app.gui import Worker, resolve_read_size
 from app.transport import TransportError
 
 
@@ -26,10 +26,14 @@ class FakeBus:
 
 
 class ReadSessionTests(unittest.TestCase):
-    def run_worker(self, identify, action="read", enter_error_count=0):
+    def run_worker(self, identify, action="read", enter_error_count=0,
+                   read_size=256 * 1024):
         worker = Worker(action, "COM1", (7, 6),
-                        SimpleNamespace(read_protocol=True), (0x8227, 2))
+                        SimpleNamespace(read_protocol=True), (0x8227, 2),
+                        read_size=read_size)
         finished, failed = [], []
+        self.read_sizes = []
+        read_sizes = self.read_sizes
         entry_calls = [0]
         worker.finished.connect(lambda action, result: finished.append((action, result)))
         worker.failed.connect(failed.append)
@@ -50,6 +54,7 @@ class ReadSessionTests(unittest.TestCase):
                 return (0x8227, 2)
 
             def read_flash(self, size, progress):
+                read_sizes.append(size)
                 progress(size, size)
                 return b"backup"
 
@@ -68,6 +73,20 @@ class ReadSessionTests(unittest.TestCase):
         self.assertEqual(failed, [])
         self.assertEqual(finished, [("read", ((0x8227, 2), b"backup"))])
         self.assertEqual(cycles, 0)
+
+    def test_manual_128_kib_reaches_page_reader(self):
+        finished, failed, _ = self.run_worker((0x8227, 2), read_size=128 * 1024)
+        self.assertEqual(failed, [])
+        self.assertEqual(finished[0][0], "read")
+        self.assertEqual(self.read_sizes, [128 * 1024])
+
+    def test_auto_requires_detected_size(self):
+        self.assertEqual(resolve_read_size(None, 256 * 1024), 256 * 1024)
+        with self.assertRaises(ValueError):
+            resolve_read_size(None, None)
+        self.assertEqual(resolve_read_size(64 * 1024, None), 64 * 1024)
+        with self.assertRaises(ValueError):
+            resolve_read_size(512 * 1024, None)
 
     def test_direct_entry_after_address_nack_avoids_power_cycle(self):
         finished, failed, cycles = self.run_worker(TransportError("ERR ADDRESS_NACK"))

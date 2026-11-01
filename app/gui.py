@@ -21,7 +21,15 @@ from .models import FAMILIES_BY_MANUFACTURER
 from .style import STYLESHEET
 from .transport import PicoTransport, TransportError, ports
 
-READ_WINDOW = 256 * 1024  # Current READPAGE firmware limit; not a capacity claim.
+READ_SIZES = tuple(kib * 1024 for kib in (64, 128, 256))
+
+
+def resolve_read_size(selected_size, detected_size):
+    """Choose a read range without treating a manual value as detected capacity."""
+    size = detected_size if selected_size is None else selected_size
+    if size not in READ_SIZES:
+        raise ValueError("Flash capacity unknown. Select a Read size first.")
+    return size
 
 
 class Worker(QObject):
@@ -31,11 +39,13 @@ class Worker(QObject):
     finished = Signal(str, object)
     failed = Signal(str)
 
-    def __init__(self, action, port, pins, profile, expected_identity=None, image_path=None):
+    def __init__(self, action, port, pins, profile, expected_identity=None,
+                 image_path=None, read_size=None):
         super().__init__()
         self.action, self.port, self.pins, self.profile = action, port, pins, profile
         self.expected_identity = expected_identity
         self.image_path = image_path
+        self.read_size = read_size
 
     def wait_for_target_reset(self):
         def power_status(message):
@@ -144,9 +154,11 @@ class Worker(QObject):
             elif self.action == "read":
                 if not self.profile.read_protocol:
                     raise RuntimeError("Read is unavailable for this family")
-                self.status.emit("Reading EC flash...")
+                if self.read_size not in READ_SIZES:
+                    raise RuntimeError("No valid read size selected")
+                self.status.emit(f"Reading {self.read_size // 1024} KiB from address 0...")
                 data = ec.read_flash(
-                    READ_WINDOW,
+                    self.read_size,
                     lambda done, total: self.progress.emit(done * 100 // total),
                 )
                 self.finished.emit("read", (identity, data))
@@ -214,7 +226,7 @@ class Window(QMainWindow):
         scroll.setWidget(root)
         outer = QVBoxLayout(root)
         outer.setContentsMargins(24, 20, 24, 20)
-        outer.setSpacing(13)
+        outer.setSpacing(11)
         title = QLabel("EC Programmer")
         title.setObjectName("title")
         outer.addWidget(title)
@@ -291,6 +303,20 @@ class Window(QMainWindow):
         row = QHBoxLayout()
         row.setSpacing(10)
         operations_layout.addLayout(row)
+        row.addWidget(QLabel("Read size"))
+        self.read_size = QComboBox()
+        self.read_size.setToolTip(
+            "Auto uses a detected profile. A manual size controls the read range, "
+            "but does not prove the EC flash capacity."
+        )
+        self.read_size.addItem("Auto (detected)", None)
+        for size in READ_SIZES:
+            self.read_size.addItem(f"{size // 1024} KiB", size)
+        row.addWidget(self.read_size)
+        row.addStretch(1)
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        operations_layout.addLayout(row)
         self.read = QPushButton("Read")
         self.read.setObjectName("primary")
         self.read.clicked.connect(lambda: self.start("read"))
@@ -301,7 +327,10 @@ class Window(QMainWindow):
         self.erase = QPushButton("Erase")
         self.erase.clicked.connect(lambda: self.start("erase"))
         row.addWidget(self.erase, 1)
-        operation_hint = QLabel("Read saves a backup. Write verifies the programmed image.")
+        operation_hint = QLabel(
+            "Read starts at address 0; a manual size may save only part of the flash. "
+            "Write verifies the programmed image."
+        )
         operation_hint.setObjectName("hint")
         operation_hint.setWordWrap(True)
         operations_layout.addWidget(operation_hint)
@@ -367,7 +396,7 @@ class Window(QMainWindow):
         port_selected = self.port.currentData() is not None
         profile = self.model.currentData()
         for control in (self.port, self.refresh_button, self.manufacturer,
-                        self.model, self.sda, self.scl):
+                        self.model, self.sda, self.scl, self.read_size):
             control.setEnabled(config_enabled)
         self.detect.setEnabled(config_enabled and port_selected and profile is not None)
         self.read.setText("Save read…" if self.pending_read is not None else "Read")
@@ -411,6 +440,14 @@ class Window(QMainWindow):
             return
         if action in ("read", "write", "erase") and self.connected_identity is None:
             return
+        read_size = None
+        if action == "read":
+            try:
+                read_size = resolve_read_size(self.read_size.currentData(),
+                                              self.connected_geometry)
+            except ValueError as exc:
+                QMessageBox.information(self, "Select Read size", str(exc))
+                return
         image_path = None
         if action in ("write", "erase"):
             if self.connected_geometry != SUPPORTED_SIZE:
@@ -446,7 +483,7 @@ class Window(QMainWindow):
         self.thread = QThread()
         self.worker = Worker(action, self.port.currentData(),
                              (self.sda.value(), self.scl.value()), profile,
-                             self.connected_identity, image_path)
+                             self.connected_identity, image_path, read_size)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.progress.connect(self.progress.setValue)
@@ -505,7 +542,13 @@ class Window(QMainWindow):
             )
             self.pending_read = data
             self.pending_identity = identity
-            self.note(f"Read complete: {len(data)} bytes. Choose where to save the backup.")
+            if self.connected_geometry is None:
+                extent = "target capacity unverified"
+            elif len(data) < self.connected_geometry:
+                extent = "partial read"
+            else:
+                extent = "full read"
+            self.note(f"Read complete: {len(data)} bytes ({extent}). Choose where to save.")
             self.save_read()
         elif action in ("write", "erase"):
             self.note("Write complete and verified." if action == "write" else "Erase complete.")
@@ -516,9 +559,12 @@ class Window(QMainWindow):
         if self.pending_read is None:
             return
         chip = self.pending_identity[0] if self.pending_identity else 0
-        suggested = Path.home() / f"ITE-{chip:04X}-{datetime.now():%Y%m%d-%H%M%S}.bin"
+        suggested = Path.home() / (
+            f"ITE-{chip:04X}-{len(self.pending_read) // 1024}KiB-"
+            f"{datetime.now():%Y%m%d-%H%M%S}.bin"
+        )
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save EC backup", str(suggested), "Binary image (*.bin);;All files (*)"
+            self, "Save EC read", str(suggested), "Binary image (*.bin);;All files (*)"
         )
         if not path:
             self.note("Read is held in memory. Press Read again to choose a save location.")

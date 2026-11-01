@@ -1,16 +1,17 @@
 # EC Programmer
 
 A Windows GUI and Raspberry Pi Pico firmware for ITE EC debug access over a
-two-wire bus. The application identifies an EC, reads a 256 KiB window, and
-enables erase/write only when its flash protocol profile is identified.
+two-wire bus. The application identifies an EC and reads a selected 64, 128,
+or 256 KiB range. It enables erase/write only when the flash protocol profile
+is identified.
 
 ## Current support
 
 The manufacturer selector contains **ITE** and the family selector contains
 **IT51xx**, **IT55xx**, and **IT8xxx**. IT51xx and IT55xx are discovery entries;
 their read/write protocols have not been implemented. IT8xxx supports DBGR
-identification and a 256 KiB page read. Family selection alone does not prove
-that a particular EC accepts this protocol or has that capacity.
+identification and page reads up to 256 KiB. Family selection alone does not
+prove that a particular EC accepts this protocol or has that capacity.
 
 Write and Erase require the currently implemented **ITE eFlash 8315, 256 KiB**
 profile. It is recognized from CHIPID, CHIPVER, and the flash ID. This profile
@@ -55,9 +56,12 @@ GP6 for SCL, but both are selectable. The EC side must use 3.3 V logic and
 have pull-ups; Pico pins are open drain during the entry waveform.
 
 Select the COM port, manufacturer, family, SDA and SCL pins, then click
-**Connect to EC**. A usable connection enables Read. A recognized write
-profile also enables Write and Erase. **Read** opens a save dialog when the
-read finishes. **Write** asks for an image, erases the EC, programs it, and
+**Connect to EC**. A usable connection enables Read. Choose **Read size**:
+Auto uses a recognized capacity, while 64, 128, and 256 KiB read that many
+bytes from address 0. If capacity is unknown, choose a manual size; a shorter
+read may be only part of the flash. A recognized write profile also enables
+Write and Erase. **Read** opens a save dialog when the read finishes.
+**Write** asks for an image, erases the EC, programs it, and
 verifies every byte. **Erase** only erases. There is no automatic backup before
 Write; use Read first if you want one. If the EC cannot enter debug mode while
 powered, the app arms the Pico and asks you to cycle the target's power.
