@@ -94,7 +94,12 @@ for the complete board list and staging checklist.
 
 ## License and credits
 
-Project code is MIT licensed. DBGR and SPI follow-mode sequences draw on
-Chromium OS EC `iteflash`; the entry waveform is informed by
+Project source is licensed under the GNU General Public License, version 2
+or any later version (`GPL-2.0-or-later`); see [LICENSE](LICENSE).
+DBGR and SPI follow-mode sequences draw on Chromium OS EC `iteflash`;
+the entry waveform is informed by
 `I2C-Pico-USB-ITE-EC-prog`. See [source attribution](docs/THIRD_PARTY.md).
+Bundled libraries retain their own licenses. In particular, the Windows GUI
+uses Qt/PySide6 components with LGPLv3/GPLv3 terms; the project source permits
+GPLv3 use when those components require it.
 No laptop BIOS, EC image, vendor application, or customer dump is distributed.

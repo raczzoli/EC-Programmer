@@ -1,3 +1,6 @@
+/* SPDX-FileCopyrightText: 2026 R89 Repairs and contributors
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
 /* Hand-encoded one-instruction PIO program; see dbgr_open_drain.pio.
  * Avoids requiring a host pioasm compiler for this small firmware.
  */

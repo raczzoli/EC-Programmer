@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 R89 Repairs and contributors
+# SPDX-License-Identifier: GPL-2.0-or-later
+
 cmake_minimum_required(VERSION 3.13)
 if(NOT PICO_SDK_PATH AND DEFINED ENV{PICO_SDK_PATH})
   set(PICO_SDK_PATH $ENV{PICO_SDK_PATH})

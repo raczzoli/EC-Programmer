@@ -1,3 +1,6 @@
+; SPDX-FileCopyrightText: 2026 R89 Repairs and contributors
+; SPDX-License-Identifier: GPL-2.0-or-later
+
 ; One DBGR state per PIO cycle. The two GPIO output values stay LOW.
 ; A pindir bit of 1 drives LOW; 0 releases the corresponding line.
 .program dbgr_open_drain

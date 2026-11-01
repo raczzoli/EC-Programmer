@@ -1,4 +1,7 @@
-/* Experimental USB CDC bridge for probing. MIT; see LICENSE.
+/* SPDX-FileCopyrightText: 2026 R89 Repairs and contributors
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+/* Experimental USB CDC bridge for probing.
  * All external GPIO transitions are open-drain: output LOW or input/Hi-Z.
  */
 #include <stdio.h>

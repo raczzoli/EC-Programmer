@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 R89 Repairs and contributors
+# SPDX-License-Identifier: GPL-2.0-or-later
+
 """ITE DBGR flash access, adapted from Chromium EC iteflash.
 
 No model-specific identification is implied by the returned numeric CHIPID.

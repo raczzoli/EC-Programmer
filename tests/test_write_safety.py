@@ -1,4 +1,7 @@
-﻿"""Check Write/Erase ordering without touching a real EC."""
+# SPDX-FileCopyrightText: 2026 R89 Repairs and contributors
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+"""Check Write/Erase ordering without touching a real EC."""
 import tempfile
 import unittest
 from pathlib import Path
