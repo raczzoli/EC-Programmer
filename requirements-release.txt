@@ -1,0 +1,4 @@
+# Dependency versions used for the staged Windows release.
+PySide6==6.12.0
+pyserial==3.5
+pyinstaller==6.22.3

@@ -1,0 +1,34 @@
+# Local data and release artifacts
+/_private_archive/
+/release/
+/research/
+/vendor/
+/tools/
+*.bin
+*.rom
+*.cad
+*.uf2
+*.exe
+*.zip
+*.7z
+
+# Python and packaging
+/.venv/
+__pycache__/
+*.py[cod]
+/.pytest_cache/
+/build/
+/dist/
+*.spec
+!/EC-Programmer.spec
+
+# Pico SDK / CMake generated files
+/firmware/build*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+*.elf
+*.map
+*.o
+*.obj
+*.a

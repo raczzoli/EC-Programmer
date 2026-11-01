@@ -1,0 +1,6 @@
+; One DBGR state per PIO cycle. The two GPIO output values stay LOW.
+; A pindir bit of 1 drives LOW; 0 releases the corresponding line.
+.program dbgr_open_drain
+.wrap_target
+    out pindirs, 2
+.wrap
