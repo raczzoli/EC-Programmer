@@ -69,6 +69,22 @@ class TransportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             bus.program256(0x40, b"\x5a" * 256)
 
+    def test_new_programming_capabilities_and_commands(self):
+        bus = transport.PicoTransport("COM1")
+        bus.port.replies.append(b"CAPS AAI64 AAI256 AAIV2_64 AAIV2_256 PAGE64\n")
+        self.assertTrue(bus.fast_aai_v2_available())
+        self.assertTrue(bus.fast_aai_v2_256_available())
+        self.assertTrue(bus.fast_page_available())
+        bus.port.replies.append(b"AAIV2_64 000040 OK\n")
+        bus.program_v2_64(0x40, b"\x12" * 64)
+        bus.port.replies.append(b"PAGE64 000080 OK\n")
+        bus.program_v2_64(0x80, b"\x34" * 64, page_program=True)
+        bus.port.replies.append(b"AAIV2_256 000100 OK\n")
+        bus.program_v2_256(0x100, b"\x56" * 256)
+        self.assertTrue(bus.port.written[-3].startswith(b"AAIV2_64 000040"))
+        self.assertTrue(bus.port.written[-2].startswith(b"PAGE64 000080"))
+        self.assertTrue(bus.port.written[-1].startswith(b"AAIV2_256 000100"))
+
     def test_old_firmware_uses_legacy_writer(self):
         bus = transport.PicoTransport("COM1")
         bus.port.replies.append(b"ERR COMMAND\n")

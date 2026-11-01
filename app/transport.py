@@ -58,6 +58,9 @@ class PicoTransport:
         self.port = serial.Serial(port, 115200, timeout=timeout, write_timeout=timeout)
         self._fast_aai = None
         self._fast_aai256 = False
+        self._fast_aai_v2 = False
+        self._fast_aai_v2_256 = False
+        self._fast_page = False
         try:
             self.port.reset_input_buffer()
             answer = self.command("HELLO")
@@ -125,11 +128,51 @@ class PicoTransport:
             else:
                 self._fast_aai = "AAI64" in answer.split()[1:]
                 self._fast_aai256 = "AAI256" in answer.split()[1:]
+                self._fast_aai_v2 = "AAIV2_64" in answer.split()[1:]
+                self._fast_aai_v2_256 = "AAIV2_256" in answer.split()[1:]
+                self._fast_page = "PAGE64" in answer.split()[1:]
         return self._fast_aai
 
     def fast_aai256_available(self):
         self.fast_aai_available()
         return self._fast_aai256
+
+    def fast_aai_v2_available(self):
+        self.fast_aai_available()
+        return self._fast_aai_v2
+
+    def fast_aai_v2_256_available(self):
+        self.fast_aai_available()
+        return self._fast_aai_v2_256
+
+    def fast_page_available(self):
+        self.fast_aai_available()
+        return self._fast_page
+
+    def program_v2_64(self, address, data, page_program=False):
+        if address < 0 or address > 0x3ffc0 or address & 63 or len(data) != 64:
+            raise ValueError("Programming requires an aligned 64-byte block within 256 KiB")
+        name = "PAGE64" if page_program else "AAIV2_64"
+        previous_timeout = self.port.timeout
+        self.port.timeout = max(previous_timeout, 12)
+        try:
+            answer = self.command(f"{name} {address:06X} {bytes(data).hex().upper()}")
+        finally:
+            self.port.timeout = previous_timeout
+        if answer != f"{name} {address:06X} OK":
+            raise TransportError(f"Unexpected {name} response: {answer}")
+
+    def program_v2_256(self, address, data):
+        if address < 0 or address > 0x3ff00 or address & 255 or len(data) != 256:
+            raise ValueError("AAIV2_256 requires an aligned 256-byte block within 256 KiB")
+        previous_timeout = self.port.timeout
+        self.port.timeout = max(previous_timeout, 12)
+        try:
+            answer = self.command(f"AAIV2_256 {address:06X} {bytes(data).hex().upper()}")
+        finally:
+            self.port.timeout = previous_timeout
+        if answer != f"AAIV2_256 {address:06X} OK":
+            raise TransportError(f"Unexpected AAIV2_256 response: {answer}")
 
     def program256(self, address, data):
         if address < 0 or address > 0x3ff00 or address & 255 or len(data) != 256:

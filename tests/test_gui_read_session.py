@@ -58,8 +58,9 @@ class ReadSessionTests(unittest.TestCase):
                 progress(size, size)
                 return b"backup"
 
-            def supported_geometry(self, identity):
-                return 256 * 1024
+            def flash_protocol(self, identity):
+                return SimpleNamespace(name="ITE eFlash 8315",
+                                       program_method="aai_legacy")
 
         with patch("app.gui.PicoTransport", FakeBus), \
              patch("app.gui.ECProbe", FakeEC), \
@@ -80,13 +81,14 @@ class ReadSessionTests(unittest.TestCase):
         self.assertEqual(finished[0][0], "read")
         self.assertEqual(self.read_sizes, [128 * 1024])
 
-    def test_auto_requires_detected_size(self):
-        self.assertEqual(resolve_read_size(None, 256 * 1024), 256 * 1024)
+    def test_read_requires_explicit_size(self):
         with self.assertRaises(ValueError):
-            resolve_read_size(None, None)
-        self.assertEqual(resolve_read_size(64 * 1024, None), 64 * 1024)
+            resolve_read_size(None)
+        self.assertEqual(resolve_read_size(64 * 1024), 64 * 1024)
+        self.assertEqual(resolve_read_size(192 * 1024), 192 * 1024)
+        self.assertEqual(resolve_read_size(256 * 1024), 256 * 1024)
         with self.assertRaises(ValueError):
-            resolve_read_size(512 * 1024, None)
+            resolve_read_size(512 * 1024)
 
     def test_direct_entry_after_address_nack_avoids_power_cycle(self):
         finished, failed, cycles = self.run_worker(TransportError("ERR ADDRESS_NACK"))
@@ -97,7 +99,9 @@ class ReadSessionTests(unittest.TestCase):
     def test_connect_reuses_active_session(self):
         finished, failed, cycles = self.run_worker((0x8227, 2), "connect")
         self.assertEqual(failed, [])
-        self.assertEqual(finished, [("connect", ((0x8227, 2), True, 256 * 1024))])
+        self.assertEqual(finished[0][0], "connect")
+        self.assertEqual(finished[0][1][0], (0x8227, 2))
+        self.assertEqual(finished[0][1][2].name, "ITE eFlash 8315")
         self.assertEqual(cycles, 0)
 
     def test_connect_recovers_expired_session(self):
@@ -105,7 +109,9 @@ class ReadSessionTests(unittest.TestCase):
             TransportError("ERR ADDRESS_NACK"), "connect", enter_error_count=1
         )
         self.assertEqual(failed, [])
-        self.assertEqual(finished, [("connect", ((0x8227, 2), True, 256 * 1024))])
+        self.assertEqual(finished[0][0], "connect")
+        self.assertEqual(finished[0][1][0], (0x8227, 2))
+        self.assertEqual(finished[0][1][2].name, "ITE eFlash 8315")
         self.assertEqual(cycles, 1)
 
     def test_connect_retries_nack_after_one_power_cycle(self):
@@ -113,7 +119,9 @@ class ReadSessionTests(unittest.TestCase):
             TransportError("ERR ADDRESS_NACK"), "connect", enter_error_count=2
         )
         self.assertEqual(failed, [])
-        self.assertEqual(finished, [("connect", ((0x8227, 2), True, 256 * 1024))])
+        self.assertEqual(finished[0][0], "connect")
+        self.assertEqual(finished[0][1][0], (0x8227, 2))
+        self.assertEqual(finished[0][1][2].name, "ITE eFlash 8315")
         self.assertEqual(cycles, 1)
 
     def test_unpowered_scl_timeout_can_arm_one_power_cycle(self):

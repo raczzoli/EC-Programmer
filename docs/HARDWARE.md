@@ -19,15 +19,19 @@ open-drain interface; Raspberry Pi reports it fixed in A4. See the
 
 1. Flash the UF2 matching your Pico board through BOOTSEL.
 2. Connect GND, SDA, and SCL; power the target board as required by its design.
-3. Select the COM port, ITE, the EC family, and the two GPIO numbers.
+3. Select the COM port, ITE, the EC family, the two GPIO numbers, and **Size**
+   (64, 128, 192, or 256 KiB).
 4. Click **Connect to EC**. If asked, remove target power for about five
    seconds and reconnect it while keeping the Pico attached.
-5. Choose **Read size**. Auto uses a recognized capacity; otherwise select
-   64, 128, or 256 KiB to read from address 0. A manual size does not prove
-   the target's full flash capacity. Use **Read** to save the result.
+5. **Read** starts at address 0 and saves exactly the selected range. Select
+   the size for the physical EC; the program does not determine it from this
+   choice.
    **Write (Erase + Write)** selects an image,
    erases, writes, and verifies it. **Erase** erases without writing.
 
 The displayed CHIPID and CHIPVER are numeric protocol values. The GUI cannot
-identify an exact package marking or a laptop model from these values. Flash
-capacity is shown only when a recognized flash profile establishes it.
+identify an exact package marking or a laptop model from these values. The
+displayed flash size is the user's selection; the flash command set is
+recognized from CHIPVER and the flash ID, without a model whitelist. A correct
+size selection is required
+for a full image operation.

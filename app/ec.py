@@ -8,12 +8,13 @@ No model-specific identification is implied by the returned numeric CHIPID.
 import hashlib
 import time
 from pathlib import Path
-from .flash_profiles import EFLASH_8315_256K, profile_for
+from .flash_protocols import protocol_for
+from .transport import TransportError
 
 CMD, DATA, BLOCK = 0x5A, 0x35, 0x79
 MAX_READ = 1024 * 1024
 PAGE_SIZE = 256
-SUPPORTED_SIZE = EFLASH_8315_256K.size
+FLASH_SIZES = tuple(kib * 1024 for kib in (64, 128, 192, 256))
 
 
 class FlashError(RuntimeError):
@@ -86,40 +87,50 @@ class ECProbe:
         self._spi_command(0x9f)
         return self.bus.read(BLOCK, 3)
 
-    def supported_geometry(self, identity):
-        """Resolve a write profile from hardware IDs, including blank flash."""
-        flash_id = self.flash_id()
-        profile = profile_for(identity, flash_id)
-        if profile is None:
+    def flash_protocol(self, identity):
+        """Classify the command set from EC identity and flash ID."""
+        try:
+            flash_id = self.flash_id()
+        except TransportError:
+            flash_id = b""
+        protocol = protocol_for(identity, flash_id)
+        if protocol is None:
+            # Chromium iteflash reads 0x9F through DATA (0x35). Preserve the
+            # existing BLOCK probe for already working targets, then try DATA.
+            self._follow_mode()
+            self._spi_command(0x9f)
+            flash_id = self.bus.read(DATA, 3)
+            protocol = protocol_for(identity, flash_id)
+        if protocol is None:
             raise FlashError(
-                f"No verified flash profile for CHIPID 0x{identity[0]:04X}, "
+                f"Unsupported flash protocol for CHIPID 0x{identity[0]:04X}, "
                 f"CHIPVER 0x{identity[1]:02X}, flash ID {flash_id.hex().upper()}"
             )
-        return profile.size
+        return protocol
 
     def _write_enable(self):
         self._spi_command(0x06)
         self._poll_status(3, 2, "write enable")
 
-    def erase_flash(self, size, progress=lambda done, total: None):
-        if size != SUPPORTED_SIZE:
+    def erase_flash(self, size, protocol, progress=lambda done, total: None):
+        if size not in FLASH_SIZES or size % protocol.erase_sector_size:
             raise FlashError("Unsupported erase size")
         self._follow_mode()
         refreshed = time.monotonic()
         try:
-            for address in range(0, size, 1024):
+            for address in range(0, size, protocol.erase_sector_size):
                 if time.monotonic() - refreshed > 2:
                     self.bus.read_page(0)
                     self._follow_mode()
                     refreshed = time.monotonic()
                 self._write_enable()
-                self._spi_command(0xd7)  # 1 KiB sector erase for eFlash 8315
+                self._spi_command(protocol.erase_opcode)
                 page = address // PAGE_SIZE
                 for value in ((page >> 8) & 255, page & 255, 0):
                     self.reg_write(0x08, value)
                 self._poll_status(1, 0, f"erase at 0x{address:06X}", timeout=10)
                 self._spi_command(0x04)
-                progress(address + 1024, size)
+                progress(address + protocol.erase_sector_size, size)
         except Exception:
             try:
                 self._spi_command(0x04)
@@ -127,10 +138,18 @@ class ECProbe:
                 pass
             raise
 
-    def write_flash(self, data, progress=lambda done, total: None):
-        """Legacy AAI blocks for CHIPVER revisions below 0x03."""
-        if len(data) != SUPPORTED_SIZE:
-            raise FlashError("Image size does not match the supported flash geometry")
+    def write_flash(self, data, protocol, progress=lambda done, total: None):
+        """Program selected capacity with the identified flash command set."""
+        if len(data) not in FLASH_SIZES:
+            raise FlashError("Image size is not a selectable flash capacity")
+        if protocol.program_method == "page_program":
+            self._write_pages(data, progress)
+            return
+        if protocol.program_method == "aai_v2":
+            self._write_aai_v2(data, progress)
+            return
+        if protocol.program_method != "aai_legacy":
+            raise FlashError("Unsupported programming method")
         if (hasattr(self.bus, "fast_aai256_available") and
                 self.bus.fast_aai256_available()):
             for address in range(0, len(data), 256):
@@ -188,8 +207,76 @@ class ECProbe:
                 pass
             raise
 
+    def _write_aai_v2(self, data, progress):
+        """DX AAI sequence: first word on DATA, remainder in quick block mode."""
+        if (hasattr(self.bus, "fast_aai_v2_256_available") and
+                self.bus.fast_aai_v2_256_available()):
+            for address in range(0, len(data), 256):
+                block = data[address:address + 256]
+                if block != b"\xff" * 256:
+                    self.bus.program_v2_256(address, block)
+                progress(address + 256, len(data))
+            return
+        if (hasattr(self.bus, "fast_aai_v2_available") and
+                self.bus.fast_aai_v2_available()):
+            for address in range(0, len(data), 64):
+                block = data[address:address + 64]
+                if block != b"\xff" * 64:
+                    self.bus.program_v2_64(address, block)
+                progress(address + 64, len(data))
+            return
+        self._follow_mode()
+        try:
+            for address in range(0, len(data), 64):
+                block = data[address:address + 64]
+                if block != b"\xff" * 64:
+                    self._write_enable()
+                    self._spi_command(0xAD)
+                    for value in ((address >> 16) & 255, (address >> 8) & 255,
+                                  address & 255, block[0], block[1]):
+                        self.bus.write(DATA, [value])
+                    self._poll_status(1, 0, f"AAI start at 0x{address:06X}")
+                    self.reg_write(0x10, 0x20)
+                    try:
+                        self.bus.write(BLOCK, block[2:])
+                        self.bus.write(DATA, [0xFF])
+                    finally:
+                        self.reg_write(0x10, 0)
+                    self._spi_command(0x04)
+                    self._poll_status(1, 0, f"AAI finish at 0x{address:06X}")
+                progress(address + 64, len(data))
+        finally:
+            self._spi_command(0x04)
+
+    def _write_pages(self, data, progress):
+        """KGD SPI page program; each 64-byte transaction stays within a page."""
+        if (hasattr(self.bus, "fast_page_available") and
+                self.bus.fast_page_available()):
+            for address in range(0, len(data), 64):
+                block = data[address:address + 64]
+                if block != b"\xff" * 64:
+                    self.bus.program_v2_64(address, block, page_program=True)
+                progress(address + 64, len(data))
+            return
+        self._follow_mode()
+        try:
+            for address in range(0, len(data), 64):
+                block = data[address:address + 64]
+                if block != b"\xff" * 64:
+                    self._write_enable()
+                    self._spi_command(0x02)
+                    for value in ((address >> 16) & 255, (address >> 8) & 255,
+                                  address & 255):
+                        self.bus.write(DATA, [value])
+                    self.bus.write(BLOCK, block)
+                    self._poll_status(1, 0, f"page program at 0x{address:06X}")
+                    self._spi_command(0x04)
+                progress(address + 64, len(data))
+        finally:
+            self._spi_command(0x04)
+
     def verify_flash(self, expected, progress=lambda done, total: None):
-        if len(expected) != SUPPORTED_SIZE:
+        if len(expected) not in FLASH_SIZES:
             raise FlashError("Invalid verify length")
         for address in range(0, len(expected), PAGE_SIZE):
             actual = self.bus.read_page(address)

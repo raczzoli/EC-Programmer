@@ -23,13 +23,15 @@ class FakeBus:
 
 
 class WriteSafetyTests(unittest.TestCase):
-    def run_operation(self, root, action="write", image_size=256 * 1024):
+    def run_operation(self, root, action="write", image_size=256 * 1024,
+                      selected_size=256 * 1024):
         image = root / "image.bin"
         image.write_bytes(b"\x5a" * image_size)
         events, finished, failed = [], [], []
         worker = Worker(action, "COM1", (7, 6),
                         SimpleNamespace(read_protocol=True), (0x8227, 2),
-                        str(image) if action == "write" else None)
+                        str(image) if action == "write" else None,
+                        selected_size)
         worker.finished.connect(lambda name, result: finished.append((name, result)))
         worker.failed.connect(failed.append)
 
@@ -40,15 +42,16 @@ class WriteSafetyTests(unittest.TestCase):
             def identify(self):
                 return 0x8227, 2
 
-            def supported_geometry(self, identity):
-                events.append("geometry")
-                return 256 * 1024
+            def flash_protocol(self, identity):
+                events.append("profile")
+                return SimpleNamespace(name="ITE eFlash 8315",
+                                       program_method="aai_legacy")
 
             def read_flash(self, size, progress):
                 events.append("unexpected_read")
                 raise AssertionError("Write and Erase must not read a backup")
 
-            def erase_flash(self, size, progress):
+            def erase_flash(self, size, protocol, progress):
                 events.append("erase")
                 progress(size, size)
 
@@ -56,7 +59,7 @@ class WriteSafetyTests(unittest.TestCase):
                 events.append("verify_image")
                 progress(len(expected), len(expected))
 
-            def write_flash(self, data, progress):
+            def write_flash(self, data, protocol, progress):
                 events.append("write")
                 progress(len(data), len(data))
 
@@ -68,22 +71,30 @@ class WriteSafetyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             events, finished, failed = self.run_operation(Path(directory))
             self.assertEqual(failed, [])
-            self.assertEqual(events, ["geometry", "erase", "write", "verify_image"])
+            self.assertEqual(events, ["profile", "erase", "write", "verify_image"])
             self.assertEqual(finished, [("write", (0x8227, 2))])
 
     def test_erase_only_erases_without_read_or_verify(self):
         with tempfile.TemporaryDirectory() as directory:
             events, finished, failed = self.run_operation(Path(directory), "erase")
             self.assertEqual(failed, [])
-            self.assertEqual(events, ["geometry", "erase"])
+            self.assertEqual(events, ["profile", "erase"])
             self.assertEqual(finished, [("erase", (0x8227, 2))])
 
     def test_wrong_image_size_stops_before_erase(self):
         with tempfile.TemporaryDirectory() as directory:
             events, finished, failed = self.run_operation(Path(directory), image_size=17)
-            self.assertEqual(events, ["geometry"])
+            self.assertEqual(events, ["profile"])
             self.assertEqual(finished, [])
             self.assertIn("Image must be", failed[0])
+
+    def test_128_kib_write_uses_selected_capacity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            events, finished, failed = self.run_operation(
+                Path(directory), image_size=128 * 1024,
+                selected_size=128 * 1024)
+            self.assertEqual(failed, [])
+            self.assertEqual(events, ["profile", "erase", "write", "verify_image"])
 
 
 if __name__ == "__main__":

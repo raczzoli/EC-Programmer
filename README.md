@@ -2,7 +2,7 @@
 
 A Windows GUI and Raspberry Pi Pico firmware for ITE EC debug access over a
 two-wire bus. The application identifies an EC and reads a selected 64, 128,
-or 256 KiB range. It enables erase/write only when the flash protocol profile
+192, or 256 KiB range. It enables erase/write only when the flash command set
 is identified.
 
 ## Current support
@@ -13,13 +13,17 @@ their read/write protocols have not been implemented. IT8xxx supports DBGR
 identification and page reads up to 256 KiB. Family selection alone does not
 prove that a particular EC accepts this protocol or has that capacity.
 
-Write and Erase require the currently implemented **ITE eFlash 8315, 256 KiB**
-profile. It is recognized from CHIPID, CHIPVER, and the flash ID. This profile
-has completed a physical erase, full image write, and byte-for-byte verify on
-one EC. That is not validation of every IT8xxx part. The application refuses
-destructive operations when the profile cannot be identified. A completely
-blank chip can still match the profile because identification does not depend
-on differing flash contents.
+For IT8xxx, Write and Erase support selected sizes of **64, 128, 192, and 256 KiB**
+with two flash command sets recognized by flash ID: eFlash 8315 (`FF FF FE`,
+1 KiB sector erase) and KGD (`C8` or `EF` first ID byte, 4 KiB sector erase).
+CHIPVER selects legacy AAI, newer AAI, or KGD page program. The existing
+legacy 8315 path has completed a physical erase, full image write, and
+byte-for-byte verify on one EC. The newer AAI path has also completed one full
+write and verify on hardware using 64-byte Pico blocks. Its 256-byte Pico block
+optimization and the KGD path have automated tests but still need physical
+validation. The application refuses destructive operations when the
+flash command set cannot be identified. The selected size controls the range;
+it is not a capacity measurement from the EC.
 
 ## Download and run
 
@@ -55,12 +59,11 @@ from its schematic or measured netlist. The GUI defaults to GP7 for SDA and
 GP6 for SCL, but both are selectable. The EC side must use 3.3 V logic and
 have pull-ups; Pico pins are open drain during the entry waveform.
 
-Select the COM port, manufacturer, family, SDA and SCL pins, then click
-**Connect to EC**. A usable connection enables Read. Choose **Read size**:
-Auto uses a recognized capacity, while 64, 128, and 256 KiB read that many
-bytes from address 0. If capacity is unknown, choose a manual size; a shorter
-read may be only part of the flash. A recognized write profile also enables
-Write and Erase. **Read** opens a save dialog when the read finishes.
+Select the COM port, manufacturer, family, SDA and SCL pins, and **Size**
+(64, 128, 192, or 256 KiB), then click **Connect to EC**. Read becomes
+available after the EC connects and reads that many bytes from address 0.
+Select the size for the physical EC. A recognized flash command set enables
+Write and Erase for that selected size. **Read** opens a save dialog when it finishes.
 **Write** asks for an image, erases the EC, programs it, and
 verifies every byte. **Erase** only erases. There is no automatic backup before
 Write; use Read first if you want one. If the EC cannot enter debug mode while

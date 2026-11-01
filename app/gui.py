@@ -16,20 +16,19 @@ from PySide6.QtWidgets import (
     QScrollArea, QSizePolicy, QSpinBox, QVBoxLayout, QWidget,
 )
 
-from .ec import ECProbe, SUPPORTED_SIZE, save_new
+from .ec import ECProbe, FLASH_SIZES, save_new
 from .models import FAMILIES_BY_MANUFACTURER
 from .style import STYLESHEET
 from .transport import PicoTransport, TransportError, ports
 
-READ_SIZES = tuple(kib * 1024 for kib in (64, 128, 256))
+READ_SIZES = FLASH_SIZES
 
 
-def resolve_read_size(selected_size, detected_size):
-    """Choose a read range without treating a manual value as detected capacity."""
-    size = detected_size if selected_size is None else selected_size
-    if size not in READ_SIZES:
-        raise ValueError("Flash capacity unknown. Select a Read size first.")
-    return size
+def resolve_read_size(selected_size):
+    """Require an explicit flash size before reading the target."""
+    if selected_size not in READ_SIZES:
+        raise ValueError("Select a flash size before reading.")
+    return selected_size
 
 
 class Worker(QObject):
@@ -140,17 +139,17 @@ class Worker(QObject):
                     f"EC identity changed: 0x{identity[0]:04X}/0x{identity[1]:02X}"
                 )
             if self.action == "connect":
-                geometry = None
+                detected_protocol = None
                 if page_mode:
                     try:
-                        geometry = ec.supported_geometry(identity)
+                        detected_protocol = ec.flash_protocol(identity)
                     except Exception as exc:
-                        self.status.emit(f"Flash geometry unavailable: {exc}")
+                        self.status.emit(f"Flash protocol unavailable: {exc}")
                 try:
                     hold_active = bus.command("HOLDDBGR") == "HOLDDBGR ACTIVE"
                 except TransportError:
                     hold_active = False
-                self.finished.emit("connect", (identity, hold_active, geometry))
+                self.finished.emit("connect", (identity, hold_active, detected_protocol))
             elif self.action == "read":
                 if not self.profile.read_protocol:
                     raise RuntimeError("Read is unavailable for this family")
@@ -163,25 +162,43 @@ class Worker(QObject):
                 )
                 self.finished.emit("read", (identity, data))
             elif self.action in ("write", "erase"):
-                geometry = ec.supported_geometry(identity)
-                if geometry != SUPPORTED_SIZE:
-                    raise RuntimeError("Unsupported flash geometry")
+                flash_protocol = ec.flash_protocol(identity)
+                size = self.read_size
+                if size not in FLASH_SIZES:
+                    raise RuntimeError("Select a supported flash size")
                 image = None
                 if self.action == "write":
                     image = Path(self.image_path).read_bytes()
-                    if len(image) != geometry:
-                        raise RuntimeError(f"Image must be {geometry} bytes")
+                    if len(image) != size:
+                        raise RuntimeError(f"Image must be {size} bytes")
                     self.status.emit(f"Image SHA-256 {hashlib.sha256(image).hexdigest()}")
                 self.status.emit("Erasing EC flash...")
                 destructive_started = True
                 erase_end = 40 if image is not None else 100
-                ec.erase_flash(geometry, lambda done, total:
+                ec.erase_flash(size, flash_protocol, lambda done, total:
                                self.progress.emit(done * erase_end // total))
                 if image is not None:
-                    fast = getattr(bus, "fast_aai_available", lambda: False)()
-                    self.status.emit("Programming EC flash (fast Pico path)..." if fast else
-                                     "Programming EC flash (legacy USB path)...")
-                    ec.write_flash(image, lambda done, total:
+                    availability = {
+                        "aai_legacy": "fast_aai_available",
+                        "aai_v2": "fast_aai_v2_available",
+                        "page_program": "fast_page_available",
+                    }
+                    fast = getattr(bus, availability[flash_protocol.program_method],
+                                   lambda: False)()
+                    if (flash_protocol.program_method == "aai_v2" and
+                            getattr(bus, "fast_aai_v2_256_available", lambda: False)()):
+                        self.status.emit("Programming EC flash (AAI v2, 256-byte Pico blocks)...")
+                    elif (flash_protocol.program_method == "aai_legacy" and
+                          getattr(bus, "fast_aai256_available", lambda: False)()):
+                        self.status.emit("Programming EC flash (AAI, 256-byte Pico blocks)...")
+                    elif fast:
+                        self.status.emit("Programming EC flash (64-byte Pico blocks)...")
+                    else:
+                        self.status.emit(
+                            f"Programming EC flash ({flash_protocol.name}, "
+                            f"{flash_protocol.program_method}, USB fallback)..."
+                        )
+                    ec.write_flash(image, flash_protocol, lambda done, total:
                                    self.progress.emit(40 + done * 40 // total))
                     self.status.emit("Verifying every byte...")
                     ec.verify_flash(image, lambda done, total:
@@ -207,12 +224,12 @@ class Window(QMainWindow):
         self.setWindowTitle("EC Programmer")
         self.setStyleSheet(STYLESHEET)
         self.resize(1050, 1010)
-        self.setMinimumSize(750, 560)
+        self.setMinimumSize(1050, 560)
         self.thread = None
         self.pending_read = None
         self.pending_identity = None
         self.connected_identity = None
-        self.connected_geometry = None
+        self.connected_protocol = None
         self.keepalive = QTimer(self)
         self.keepalive.setInterval(5000)
         self.keepalive.timeout.connect(self.refresh_debug_hold)
@@ -260,28 +277,43 @@ class Window(QMainWindow):
         row.addWidget(QLabel("Manufacturer"))
         self.manufacturer = QComboBox()
         self.manufacturer.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.manufacturer.setMinimumWidth(85)
         self.manufacturer.addItems(FAMILIES_BY_MANUFACTURER)
         row.addWidget(self.manufacturer, 1)
-        row.addWidget(QLabel("Model / family"))
+        row.addWidget(QLabel("Model"))
         self.model = QComboBox()
         self.model.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.model.setMinimumWidth(115)
         for profile in FAMILIES_BY_MANUFACTURER["ITE"]:
             self.model.addItem(profile.name, profile)
         row.addWidget(self.model, 2)
         row.addWidget(QLabel("SDA"))
         self.sda = QSpinBox()
+        self.sda.setFixedWidth(82)
         self.sda.setRange(0, 28)
         self.sda.setValue(7)
         self.sda.setToolTip("Pico GPIO connected to EC SDA")
         row.addWidget(self.sda)
         row.addWidget(QLabel("SCL"))
         self.scl = QSpinBox()
+        self.scl.setFixedWidth(82)
         self.scl.setRange(0, 28)
         self.scl.setValue(6)
         self.scl.setToolTip("Pico GPIO connected to EC SCL")
         row.addWidget(self.scl)
         for spin in (self.sda, self.scl):
             spin.lineEdit().setTextMargins(10, 0, 2, 0)
+        row.addWidget(QLabel("Size"))
+        self.flash_size = QComboBox()
+        self.flash_size.setFixedWidth(130)
+        self.flash_size.setToolTip(
+            "Select the EC flash size. Read, Write and Erase use this size; "
+            "Write and Erase also require a recognized flash protocol."
+        )
+        self.flash_size.addItem("Select size", None)
+        for size in READ_SIZES:
+            self.flash_size.addItem(f"{size // 1024} KiB", size)
+        row.addWidget(self.flash_size)
         row = QHBoxLayout()
         target_layout.addLayout(row)
         row.addStretch(1)
@@ -291,7 +323,7 @@ class Window(QMainWindow):
         row.addWidget(self.detect)
         row.addStretch(1)
 
-        self.identity = QLabel("EC: not connected | Flash: not identified")
+        self.identity = QLabel("EC: not connected | Flash size: not selected")
         self.identity.setWordWrap(True)
         self.identity.setObjectName("identity")
         target_layout.addWidget(self.identity)
@@ -300,20 +332,6 @@ class Window(QMainWindow):
         operations_layout = QVBoxLayout(operations)
         operations_layout.setSpacing(10)
         outer.addWidget(operations)
-        row = QHBoxLayout()
-        row.setSpacing(10)
-        operations_layout.addLayout(row)
-        row.addWidget(QLabel("Read size"))
-        self.read_size = QComboBox()
-        self.read_size.setToolTip(
-            "Auto uses a detected profile. A manual size controls the read range, "
-            "but does not prove the EC flash capacity."
-        )
-        self.read_size.addItem("Auto (detected)", None)
-        for size in READ_SIZES:
-            self.read_size.addItem(f"{size // 1024} KiB", size)
-        row.addWidget(self.read_size)
-        row.addStretch(1)
         row = QHBoxLayout()
         row.setSpacing(10)
         operations_layout.addLayout(row)
@@ -328,7 +346,7 @@ class Window(QMainWindow):
         self.erase.clicked.connect(lambda: self.start("erase"))
         row.addWidget(self.erase, 1)
         operation_hint = QLabel(
-            "Read starts at address 0; a manual size may save only part of the flash. "
+            "Read starts at address 0 and uses the selected flash size. "
             "Write verifies the programmed image."
         )
         operation_hint.setObjectName("hint")
@@ -367,6 +385,7 @@ class Window(QMainWindow):
         self.model.currentIndexChanged.connect(self.on_model_changed)
         self.sda.valueChanged.connect(self.reset_identity)
         self.scl.valueChanged.connect(self.reset_identity)
+        self.flash_size.currentIndexChanged.connect(self.on_flash_size_changed)
         self.refresh()
         i = self.model.findText("IT8xxx")
         self.model.setCurrentIndex(i)
@@ -396,25 +415,46 @@ class Window(QMainWindow):
         port_selected = self.port.currentData() is not None
         profile = self.model.currentData()
         for control in (self.port, self.refresh_button, self.manufacturer,
-                        self.model, self.sda, self.scl, self.read_size):
+                        self.model, self.sda, self.scl, self.flash_size):
             control.setEnabled(config_enabled)
         self.detect.setEnabled(config_enabled and port_selected and profile is not None)
         self.read.setText("Save read…" if self.pending_read is not None else "Read")
         self.read.setEnabled(idle and (self.pending_read is not None or
                              (port_selected and profile is not None and
-                              profile.read_protocol and self.connected_identity is not None)))
+                              profile.read_protocol and self.connected_identity is not None and
+                              self.flash_size.currentData() in READ_SIZES)))
         destructive_ready = (idle and self.pending_read is None and port_selected and
                              profile is not None and profile.read_protocol and
                              self.connected_identity is not None and
-                             self.connected_geometry == SUPPORTED_SIZE)
+                             self.connected_protocol is not None and
+                             self.flash_size.currentData() in FLASH_SIZES)
         self.write.setEnabled(destructive_ready)
         self.erase.setEnabled(destructive_ready)
 
     def reset_identity(self):
         self.keepalive.stop()
         self.connected_identity = None
-        self.connected_geometry = None
-        self.identity.setText("EC: not connected | Flash: not identified")
+        self.connected_protocol = None
+        self.update_identity_label()
+        self.update_buttons()
+
+    def update_identity_label(self):
+        size = self.flash_size.currentData()
+        selected = f"{size // 1024} KiB selected" if size else "not selected"
+        if self.connected_identity is None:
+            self.identity.setText(f"EC: not connected | Flash size: {selected}")
+            return
+        chip, version = self.connected_identity
+        protocol = (f"{self.connected_protocol.name} "
+                    f"({self.connected_protocol.program_method})"
+                    if self.connected_protocol else "unavailable")
+        self.identity.setText(
+            f"CHIPID 0x{chip:04X} | CHIPVER 0x{version:02X} | "
+            f"Flash size: {selected} | Flash protocol: {protocol}"
+        )
+
+    def on_flash_size_changed(self):
+        self.update_identity_label()
         self.update_buttons()
 
     def on_model_changed(self):
@@ -443,14 +483,14 @@ class Window(QMainWindow):
         read_size = None
         if action == "read":
             try:
-                read_size = resolve_read_size(self.read_size.currentData(),
-                                              self.connected_geometry)
+                read_size = resolve_read_size(self.flash_size.currentData())
             except ValueError as exc:
-                QMessageBox.information(self, "Select Read size", str(exc))
+                QMessageBox.information(self, "Select flash size", str(exc))
                 return
         image_path = None
         if action in ("write", "erase"):
-            if self.connected_geometry != SUPPORTED_SIZE:
+            if (self.connected_protocol is None or
+                    self.flash_size.currentData() not in FLASH_SIZES):
                 return
             if action == "write":
                 image_path, _ = QFileDialog.getOpenFileName(
@@ -464,9 +504,9 @@ class Window(QMainWindow):
                 except OSError as exc:
                     QMessageBox.critical(self, "Cannot open image", str(exc))
                     return
-                if image_size != self.connected_geometry:
+                if image_size != self.flash_size.currentData():
                     QMessageBox.critical(self, "Wrong image size",
-                                         f"Expected {self.connected_geometry} bytes; file has {image_size}.")
+                                         f"Expected {self.flash_size.currentData()} bytes; file has {image_size}.")
                     return
             label = "erase and write" if action == "write" else "erase"
             message = (f"This will {label} the EC flash. "
@@ -483,7 +523,8 @@ class Window(QMainWindow):
         self.thread = QThread()
         self.worker = Worker(action, self.port.currentData(),
                              (self.sda.value(), self.scl.value()), profile,
-                             self.connected_identity, image_path, read_size)
+                             self.connected_identity, image_path,
+                             self.flash_size.currentData())
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.progress.connect(self.progress.setValue)
@@ -513,21 +554,21 @@ class Window(QMainWindow):
 
     def on_finished(self, action, result):
         if action == "connect":
-            (chip, version), hold_active, geometry = result
+            (chip, version), hold_active, detected_protocol = result
             if self.model.currentData().read_protocol and (chip & 0xF000) != 0x8000:
                 self.note(f"Identified 0x{chip:04X}/0x{version:02X}, outside the selected IT8xxx family.")
                 self.reset_identity()
                 return
             self.connected_identity = (chip, version)
-            self.connected_geometry = geometry
-            self.identity.setText(
-                f"CHIPID 0x{chip:04X} | CHIPVER 0x{version:02X} | "
-                f"Flash {'256 KiB' if geometry == SUPPORTED_SIZE else 'capacity unknown'}"
-            )
-            if geometry == SUPPORTED_SIZE:
+            self.connected_protocol = detected_protocol
+            self.update_identity_label()
+            if detected_protocol is not None and self.flash_size.currentData() in FLASH_SIZES:
                 self.note("EC connected. Read, Write and Erase are available.")
             elif self.model.currentData().read_protocol:
-                self.note("EC connected. Read is available; flash geometry is unverified.")
+                if self.flash_size.currentData() in READ_SIZES:
+                    self.note("EC connected. Read is available for the selected size.")
+                else:
+                    self.note("EC connected. Select a flash size to enable Read.")
             else:
                 self.note("EC identified. Read protocol for this family is not implemented yet.")
             if hold_active and self.model.currentData().read_protocol:
@@ -535,20 +576,10 @@ class Window(QMainWindow):
             self.update_buttons()
         elif action == "read":
             identity, data = result
-            chip, version = identity
-            self.identity.setText(
-                f"CHIPID 0x{chip:04X} | CHIPVER 0x{version:02X} | "
-                f"Read {len(data) // 1024} KiB"
-            )
+            self.update_identity_label()
             self.pending_read = data
             self.pending_identity = identity
-            if self.connected_geometry is None:
-                extent = "target capacity unverified"
-            elif len(data) < self.connected_geometry:
-                extent = "partial read"
-            else:
-                extent = "full read"
-            self.note(f"Read complete: {len(data)} bytes ({extent}). Choose where to save.")
+            self.note(f"Read complete: {len(data)} bytes (selected size). Choose where to save.")
             self.save_read()
         elif action in ("write", "erase"):
             self.note("Write complete and verified." if action == "write" else "Erase complete.")

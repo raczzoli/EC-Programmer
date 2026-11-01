@@ -385,6 +385,83 @@ failed: {
     }
 }
 
+/* Newer IT8xxx 8315 eFlash sends the first AAI word through 0x35 before
+ * quick block mode. KGD eFlash uses SPI page-program (0x02) instead. */
+static void program_flash_v2_block(uint32_t address, const uint8_t *data,
+                                   size_t count, bool page_program) {
+    const char *name = page_program ? "PAGE64" :
+                       count == 256 ? "AAIV2_256" : "AAIV2_64";
+    if (!dbgr_hold_until_us) { printf("ERR %s_NO_DBGR\n", name); return; }
+    if ((count != 64 && count != 256) || (page_program && count != 64) ||
+        address > 0x40000u - count || (address & (count - 1u))) {
+        printf("ERR %s_ADDRESS\n", name); return;
+    }
+    const char *stage = "FOLLOW";
+    bool quick_mode = false;
+    spi_last_status = 0xff;
+    dbgr_hold_tick();
+    if (!dbgr_hold_until_us) { printf("ERR %s_DBGR_HOLD_LOST\n", name); return; }
+    const uint8_t follow[][2] = {
+        {0x07, 0x7f}, {0x06, 0xff}, {0x05, 0xfe}, {0x04, 0}, {0x08, 0}
+    };
+    for (unsigned i = 0; i < sizeof follow / sizeof follow[0]; ++i) {
+        if (!dbgr_reg_write(follow[i][0], follow[i][1])) goto failed;
+    }
+    stage = "WRITE_ENABLE";
+    if (!spi_short_command(0x06) || !spi_wait_status(3, 2)) goto failed;
+    stage = "PROGRAM_COMMAND";
+    if (!spi_short_command(page_program ? 0x02 : 0xad)) goto failed;
+    stage = "ADDRESS";
+    for (int shift = 16; shift >= 0; shift -= 8) {
+        uint8_t value = (address >> shift) & 0xffu;
+        if (!write_i2c(0x35, &value, 1)) goto failed;
+    }
+    if (page_program) {
+        stage = "PAGE_DATA";
+        if (!write_i2c(0x79, data, count)) goto failed;
+    } else {
+        stage = "FIRST_WORD";
+        if (!write_i2c(0x35, data, 1) ||
+            !write_i2c(0x35, data + 1, 1) ||
+            !spi_wait_status(1, 0)) goto failed;
+        stage = "QUICK_MODE";
+        if (!dbgr_reg_write(0x10, 0x20)) goto failed;
+        quick_mode = true;
+        stage = "AAI_DATA";
+        for (size_t offset = 2; offset < count; ) {
+            size_t chunk = count - offset;
+            if (chunk > 64) chunk = 64;
+            if (!write_i2c(0x79, data + offset, chunk)) goto failed;
+            offset += chunk;
+        }
+        stage = "FINISH";
+        uint8_t finish = 0xff;
+        if (!write_i2c(0x35, &finish, 1) ||
+            !dbgr_reg_write(0x10, 0)) goto failed;
+        quick_mode = false;
+    }
+    stage = "WAIT_READY";
+    if (page_program) {
+        if (!spi_wait_status(1, 0) || !spi_short_command(0x04)) goto failed;
+    } else {
+        if (!spi_short_command(0x04) || !spi_wait_status(1, 0)) goto failed;
+    }
+    dbgr_hold_refresh();
+    printf("%s %06lX OK\n", name, (unsigned long)address);
+    return;
+failed: {
+        const char *reason = i2c_error ? i2c_error : "SPI_STATUS_ERROR";
+        if (quick_mode) {
+            uint8_t finish = 0xff;
+            write_i2c(0x35, &finish, 1);
+        }
+        dbgr_reg_write(0x10, 0);
+        spi_short_command(0x04);
+        printf("ERR %s_%s ADDR=%06lX STATUS=%02X %s\n", name,
+               stage, (unsigned long)address, spi_last_status, reason);
+    }
+}
+
 static void enter_dbgr_fast(void) {
     dbgr_hold_until_us = 0;
     if (!adjacent_bus_pins()) { puts("ERR ENTERDBGR_PINS"); return; }
@@ -516,7 +593,7 @@ static bool parse_hex(const char *s, uint8_t *buf, size_t capacity, size_t *len)
 static void command(char *cmd) {
     unsigned a, b; char hex[MAX_XFER*2+1]; uint8_t buf[MAX_XFER]; size_t len;
     if (!strcmp(cmd,"HELLO")) { puts("OK PICO_ITE_EC_PROGRAMMER 2"); return; }
-    if (!strcmp(cmd,"CAPS")) { puts("CAPS AAI64 AAI256"); return; }
+    if (!strcmp(cmd,"CAPS")) { puts("CAPS AAI64 AAI256 AAIV2_64 AAIV2_256 PAGE64"); return; }
     if (!strcmp(cmd,"RELEASE")) { release_bus(); puts("OK"); return; }
     if (!strcmp(cmd,"HOLDDBGR")) {
         printf("HOLDDBGR %s\n", dbgr_hold_until_us ? "ACTIVE" : "INACTIVE");
@@ -529,6 +606,28 @@ static void command(char *cmd) {
             puts("ERR AAI64_DATA"); return;
         }
         program_flash_block(a,buf,64); return;
+    }
+    if (sscanf(cmd,"AAIV2_64 %x %128s",&a,hex)==2) {
+        if (!parse_hex(hex,buf,sizeof buf,&len) || len != 64) {
+            puts("ERR AAIV2_64_DATA"); return;
+        }
+        program_flash_v2_block(a,buf,64,false); return;
+    }
+    if (!strncmp(cmd,"AAIV2_256 ",10)) {
+        char program_hex[MAX_PROGRAM*2+1];
+        uint8_t program_data[MAX_PROGRAM];
+        if (sscanf(cmd,"AAIV2_256 %x %512s",&a,program_hex)!=2 ||
+            !parse_hex(program_hex,program_data,sizeof program_data,&len) ||
+            len != MAX_PROGRAM) {
+            puts("ERR AAIV2_256_DATA"); return;
+        }
+        program_flash_v2_block(a,program_data,MAX_PROGRAM,false); return;
+    }
+    if (sscanf(cmd,"PAGE64 %x %128s",&a,hex)==2) {
+        if (!parse_hex(hex,buf,sizeof buf,&len) || len != 64) {
+            puts("ERR PAGE64_DATA"); return;
+        }
+        program_flash_v2_block(a,buf,64,true); return;
     }
     if (!strncmp(cmd,"AAI256 ",7)) {
         char program_hex[MAX_PROGRAM*2+1];

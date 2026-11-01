@@ -19,6 +19,7 @@ __pycache__/
 /.pytest_cache/
 /build/
 /dist/
+/dist-preview*/
 *.spec
 !/EC-Programmer.spec
 
