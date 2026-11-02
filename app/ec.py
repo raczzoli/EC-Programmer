@@ -10,11 +10,10 @@ import time
 from pathlib import Path
 from .flash_protocols import protocol_for
 from .transport import TransportError
+from .geometry import PAGE_SIZE, FLASH_SIZES, MAX_FLASH_SIZE
 
 CMD, DATA, BLOCK = 0x5A, 0x35, 0x79
 MAX_READ = 1024 * 1024
-PAGE_SIZE = 256
-FLASH_SIZES = tuple(kib * 1024 for kib in (64, 128, 192, 256))
 
 
 class FlashError(RuntimeError):
@@ -26,11 +25,19 @@ class ECProbe:
         self.bus = bus
         self.page_mode = page_mode
 
+    def _supports(self, capability):
+        return hasattr(self.bus, "supports") and self.bus.supports(capability)
+
     def reg_read(self, reg):
+        if self._supports("REGIO"):
+            return self.bus.reg_read(reg)
         self.bus.write(CMD, [reg])
         return self.bus.read(DATA, 1)[0]
 
     def reg_write(self, reg, value):
+        if self._supports("REGIO"):
+            self.bus.reg_write(reg, value)
+            return
         self.bus.write(CMD, [reg])
         self.bus.write(DATA, [value])
 
@@ -47,6 +54,8 @@ class ECProbe:
         return self.identify()
 
     def identify(self):
+        if self.page_mode and self._supports("SESSION"):
+            return self.bus.session()
         version = self.reg_read(0x02)
         high = self.reg_read(0x00)
         low = self.reg_read(0x01)
@@ -72,10 +81,12 @@ class ECProbe:
             self.reg_write(reg, value)
 
     def _poll_status(self, mask, expected, description, timeout=5):
-        self._spi_command(0x05)
+        atomic = self._supports("SPISTATUS")
+        if not atomic:
+            self._spi_command(0x05)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            status = self.bus.read(DATA, 1)[0]
+            status = self.bus.spi_status() if atomic else self.bus.read(DATA, 1)[0]
             if status & mask == expected:
                 return
             time.sleep(0.002)
@@ -83,6 +94,8 @@ class ECProbe:
 
     def flash_id(self):
         """Read-only 0x9F probe; identifies the flash command set, not capacity."""
+        if self._supports("FLASHID"):
+            return self.bus.flash_id(BLOCK)
         self._follow_mode()
         self._spi_command(0x9f)
         return self.bus.read(BLOCK, 3)
@@ -91,15 +104,20 @@ class ECProbe:
         """Classify the command set from EC identity and flash ID."""
         try:
             flash_id = self.flash_id()
-        except TransportError:
+        except TransportError as exc:
+            if not any(code in str(exc) for code in ("ADDRESS_NACK", "DATA_NACK")):
+                raise
             flash_id = b""
         protocol = protocol_for(identity, flash_id)
         if protocol is None:
             # Chromium iteflash reads 0x9F through DATA (0x35). Preserve the
             # existing BLOCK probe for already working targets, then try DATA.
-            self._follow_mode()
-            self._spi_command(0x9f)
-            flash_id = self.bus.read(DATA, 3)
+            if self._supports("FLASHID"):
+                flash_id = self.bus.flash_id(DATA)
+            else:
+                self._follow_mode()
+                self._spi_command(0x9f)
+                flash_id = self.bus.read(DATA, 3)
             protocol = protocol_for(identity, flash_id)
         if protocol is None:
             raise FlashError(
@@ -115,6 +133,11 @@ class ECProbe:
     def erase_flash(self, size, protocol, progress=lambda done, total: None):
         if size not in FLASH_SIZES or size % protocol.erase_sector_size:
             raise FlashError("Unsupported erase size")
+        if self._supports("ERASESECTOR"):
+            for address in range(0, size, protocol.erase_sector_size):
+                self.bus.erase_sector(address, protocol.erase_opcode)
+                progress(address + protocol.erase_sector_size, size)
+            return
         self._follow_mode()
         refreshed = time.monotonic()
         try:
@@ -291,7 +314,7 @@ class ECProbe:
         if size < 256 or size > MAX_READ or size % 256:
             raise ValueError("Size must be a multiple of 256 bytes, up to 1 MiB")
         if self.page_mode:
-            if size > 256 * 1024:
+            if size > MAX_FLASH_SIZE:
                 raise ValueError("Current page reader is limited to 256 KiB")
             result = bytearray()
             for address in range(0, size, 256):

@@ -118,12 +118,14 @@ QProgressBar {
     background: #0d1728;
     border: 1px solid #273951;
     border-radius: 6px;
-    min-height: 12px;
-    max-height: 12px;
+    min-height: 20px;
+    max-height: 20px;
     text-align: center;
-    color: transparent;
+    color: #ffffff;
+    font-size: 9pt;
+    font-weight: 600;
 }
-QProgressBar::chunk { background: #22c55e; border-radius: 5px; }
+QProgressBar::chunk { background: #15803d; border-radius: 5px; }
 QPlainTextEdit {
     background: #0a1424;
     color: #cbd5e1;

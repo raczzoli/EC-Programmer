@@ -1,7 +1,8 @@
 # Source attribution
 
 - The ITE DBGR register and SPI follow-mode sequences in `app/ec.py` and the
-  entry waveform in `firmware/main.c` were adapted from the Chromium OS EC
+  algorithms in `firmware/ite_flash.c` and entry waveform in
+  `firmware/ite_dbgr.c` were adapted from the Chromium OS EC
   `iteflash` implementation. Copyright The Chromium OS Authors. Its source
   and BSD-style license are available at
   [Chromium OS EC iteflash](https://chromium.googlesource.com/chromiumos/platform/ec/+/main/util/iteflash.cc)
@@ -15,9 +16,16 @@
 - That fork derives from
   [Daniel Quadros's I2C-Pico-USB](https://github.com/dquadros/I2C-Pico-USB).
   This project does not bundle its USB transport or firmware.
+- ENE EDI register access and page erase/program/read sequences in
+  `firmware/ene_edi.c` and `app/ene.py` were adapted from
+  [flashrom edi.c](https://github.com/flashrom/flashrom/blob/main/edi.c) by
+  Paul Kocialkowski, GPL-2.0-or-later. The KB9052B/D HWVERSION and EDIID
+  pairs were published by [Jack O'Neo in his flashrom extension notes](https://eletronicabr.com/forums/topic/111881-ler-e-gravar-kbc-ene-kb90xx-com-o-gravador-ch341a-usando-flashrom-no-mint-linux/).
 
 The Raspberry Pi Pico SDK, Arm toolchain, and local build caches are not
-included in the source repository or release artifacts. The packaged GUI
+included in the source repository. UF2 binaries link Pico SDK and TinyUSB code;
+the candidate builder includes their license texts under
+`pico-firmwares/licenses/`. The packaged GUI
 contains PySide6/Qt and PySerial. They retain their own licenses: Qt for
 Python is offered under LGPLv3/GPLv3 or commercial terms, and PySerial 3.5
 is BSD-3-Clause. The source repository and Windows release include the

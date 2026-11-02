@@ -29,3 +29,9 @@ to EC SCL with the defaults. The GUI permits another adjacent GPIO pair.
 The header-equipped Raspberry Pi Pico variants differ physically in their
 headers and debug connector, so they use the base board UF2. See
 [Raspberry Pi Pico board documentation](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html).
+
+For ENE EDI, all builds use SPI0 on fixed **GP4 (EDI DO)**, **GP5 (EDI CS)**,
+**GP6 (EDI CLK)**, and **GP7 (EDI DI)** plus common GND. The target's KSO3
+test signal also needs the board-specific low connection. Check that those
+GPIOs are exposed on your Pico variant before choosing its UF2. See the ENE
+section in the main README for target-side signal names.

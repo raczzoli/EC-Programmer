@@ -3,7 +3,33 @@
 The source repository intentionally excludes `release/`, local SDK copies,
 build directories, vendor applications, target firmware images, and EC reads.
 
-1. Run `python -m unittest discover -s tests`.
+## Candidate builds
+
+Set the version in `VERSION`. Install `requirements-release.txt` and
+`requirements-test.txt`. Provide Pico SDK **2.3.1** (with submodules), CMake, Ninja
+and an Arm GNU toolchain. The locally validated toolchain is **14.2 rel1**.
+
+Run `python devtools/build_release.py --sdk C:/path/to/pico-sdk`. Optional
+`--toolchain` and `--picotool` arguments accept an Arm toolchain root and a
+directory containing `picotoolConfig.cmake`. Otherwise tools must be discoverable
+by CMake/PATH. Firmware build directories are reused for incremental compilation.
+
+The script runs tests before building and stages a versioned candidate under
+`release-candidate/`. A source-content identifier is embedded in the GUI and
+every UF2 (`INFO` also reports the board). The manifest records hashes, dependency
+versions and pending hardware validation. The source hash is a traceability aid,
+not a claim of byte-identical builds across operating systems/toolchains.
+
+The existing release is never overwritten. Before promoting a candidate, check
+on a physical ITE target: connect, two matching reads, write and full verify,
+then boot the target with the programmer detached. Verify recovery after a normal
+disconnect, and retain the previous UF2/EXE for rollback. Other board profiles
+remain compile-tested unless physically exercised. Do not interrupt a real write
+just to exercise error handling; simulated tests cover that case.
+
+## Publishing a tested candidate
+
+1. Run `python -m unittest discover -s tests` (includes native C regression tests).
 2. Install `requirements-release.txt` and build the GUI from
    `EC-Programmer.spec` in a clean Python environment.
 3. Build UF2 files separately for `pico`, `pico_w`, `pico2`, `pico2_w`,

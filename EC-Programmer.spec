@@ -1,13 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
 # SPDX-FileCopyrightText: 2026 R89 Repairs and contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
-
+import os
 
 a = Analysis(
     ['run_gui.py'],
     pathex=[],
     binaries=[],
-    datas=[('app/assets', 'app/assets')],
+    datas=[('app/assets', 'app/assets'), ('VERSION', '.')]
+          + ([(os.environ['EC_BUILD_INFO_FILE'], '.')]
+             if os.environ.get('EC_BUILD_INFO_FILE') else []),
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 R89 Repairs and contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-"""ITE family choices; model-specific experiments stay outside the GUI."""
+"""Target family choices and their transport backends."""
 from dataclasses import dataclass
 
 
@@ -9,6 +9,7 @@ from dataclasses import dataclass
 class Family:
     name: str
     read_protocol: bool = False
+    transport: str = "ite"
 
 
 FAMILIES = (
@@ -17,4 +18,7 @@ FAMILIES = (
     Family("IT8xxx", True),
 )
 
-FAMILIES_BY_MANUFACTURER = {"ITE": FAMILIES}
+FAMILIES_BY_MANUFACTURER = {
+    "ITE": FAMILIES,
+    "ENE": (Family("KB90xx EDI", True, "ene_edi"),),
+}

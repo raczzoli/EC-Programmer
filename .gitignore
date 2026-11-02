@@ -1,6 +1,7 @@
 # Local data and release artifacts
 /_private_archive/
 /release/
+/release-candidate/
 /research/
 /vendor/
 /tools/

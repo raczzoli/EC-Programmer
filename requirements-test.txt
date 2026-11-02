@@ -1,0 +1,2 @@
+# Native firmware regression tests on Windows (Linux can use GCC instead).
+ziglang==0.13.0

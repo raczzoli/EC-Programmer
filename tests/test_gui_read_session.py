@@ -5,8 +5,9 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app.gui import Worker, resolve_read_size
+from app.operations import Worker, resolve_read_size
 from app.transport import TransportError
+from app.session import validate_ite_pins
 
 
 class FakeBus:
@@ -62,10 +63,10 @@ class ReadSessionTests(unittest.TestCase):
                 return SimpleNamespace(name="ITE eFlash 8315",
                                        program_method="aai_legacy")
 
-        with patch("app.gui.PicoTransport", FakeBus), \
-             patch("app.gui.ECProbe", FakeEC), \
+        with patch("app.operations.PicoTransport", FakeBus), \
+             patch("app.operations.ECProbe", FakeEC), \
              patch.object(FakeBus, "wait_power_cycle", create=True) as wait, \
-             patch("app.gui.time.sleep"):
+             patch("app.session.time.sleep"):
             worker.run()
         return finished, failed, wait.call_count
 
@@ -131,6 +132,26 @@ class ReadSessionTests(unittest.TestCase):
         self.assertEqual(failed, [])
         self.assertEqual(finished[0][0], "connect")
         self.assertEqual(cycles, 1)
+
+    def test_identity_change_stops_before_read(self):
+        finished, failed, cycles = self.run_worker((0x8218, 1))
+        self.assertFalse(finished)
+        self.assertIn("identity changed", failed[0])
+        self.assertEqual(self.read_sizes, [])
+        self.assertEqual(cycles, 0)
+
+    def test_disconnected_usb_does_not_trigger_power_cycle_recovery(self):
+        finished, failed, cycles = self.run_worker(TransportError("Timeout USB CDC"))
+        self.assertFalse(finished)
+        self.assertIn("Timeout USB CDC", failed[0])
+        self.assertEqual(cycles, 0)
+
+    def test_pin_validation_rejects_pairs_the_waveform_cannot_use(self):
+        for pair in ((7, 6), (6, 7), (27, 28), (22, 21)):
+            validate_ite_pins(*pair)
+        for pair in ((7, 7), (6, 8), (22, 23), (25, 26), (-1, 0), (28, 29)):
+            with self.subTest(pair=pair), self.assertRaises(ValueError):
+                validate_ite_pins(*pair)
 
 
 if __name__ == "__main__":

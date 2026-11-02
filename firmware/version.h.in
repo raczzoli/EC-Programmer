@@ -1,0 +1,7 @@
+/* SPDX-FileCopyrightText: 2026 R89 Repairs and contributors
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+#pragma once
+#define EC_VERSION "@EC_VERSION@"
+#define EC_BUILD_ID "@EC_BUILD_ID@"
+#define EC_BOARD "@PICO_BOARD@"

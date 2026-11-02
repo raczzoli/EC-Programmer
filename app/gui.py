@@ -1,231 +1,44 @@
 # SPDX-FileCopyrightText: 2026 R89 Repairs and contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-"""Windows GUI for ITE EC communication and staged flash operations."""
+"""Windows GUI for ITE and ENE EC flash operations."""
 
-import hashlib
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
+from PySide6.QtCore import QThread, QTimer, Qt
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFrame, QGroupBox, QHBoxLayout,
     QLabel, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
     QScrollArea, QSizePolicy, QSpinBox, QVBoxLayout, QWidget,
 )
 
-from .ec import ECProbe, FLASH_SIZES, save_new
+from .ec import FLASH_SIZES, save_new
+from .ene import FLASH_SIZE as ENE_FLASH_SIZE
 from .models import FAMILIES_BY_MANUFACTURER
 from .style import STYLESHEET
-from .transport import PicoTransport, TransportError, ports
+from .transport import ports
 
-READ_SIZES = FLASH_SIZES
-
-
-def resolve_read_size(selected_size):
-    """Require an explicit flash size before reading the target."""
-    if selected_size not in READ_SIZES:
-        raise ValueError("Select a flash size before reading.")
-    return selected_size
-
-
-class Worker(QObject):
-    progress = Signal(int)
-    status = Signal(str)
-    power_cycle_needed = Signal()
-    finished = Signal(str, object)
-    failed = Signal(str)
-
-    def __init__(self, action, port, pins, profile, expected_identity=None,
-                 image_path=None, read_size=None):
-        super().__init__()
-        self.action, self.port, self.pins, self.profile = action, port, pins, profile
-        self.expected_identity = expected_identity
-        self.image_path = image_path
-        self.read_size = read_size
-
-    def wait_for_target_reset(self):
-        def power_status(message):
-            self.status.emit(message)
-            if message.startswith("Pico is armed:"):
-                self.power_cycle_needed.emit()
-
-        PicoTransport.wait_power_cycle(self.port, self.pins, power_status)
-
-    @staticmethod
-    def _bus_unavailable(exc):
-        return any(part in str(exc) for part in
-                   ("ADDRESS_NACK", "DATA_NACK", "SCL_LOW_TIMEOUT"))
-
-    def enter_after_power_cycle(self, ec):
-        """Give the powered EC time to accept DBGR without another unplug."""
-        last_error = None
-        for delay in (0, 0.5, 1, 2, 3, 4):
-            if delay:
-                time.sleep(delay)
-            try:
-                return ec.identify()
-            except TransportError as exc:
-                if not self._bus_unavailable(exc):
-                    raise
-            try:
-                return ec.enter_and_identify()
-            except TransportError as exc:
-                if "ENTERDBGR_NO_ACK" not in str(exc):
-                    raise
-                last_error = exc
-                self.status.emit("EC is powered but has not acknowledged DBGR; retrying...")
-        raise last_error
-
-    @Slot()
-    def run(self):
-        bus = None
-        destructive_started = False
-        try:
-            page_mode = self.profile.read_protocol
-            if page_mode and self.action in ("read", "write", "erase"):
-                bus = PicoTransport(self.port, timeout=5)
-                bus.pins(*self.pins)
-                ec = ECProbe(bus, page_mode=True)
-                try:
-                    identity = ec.identify()
-                except TransportError as exc:
-                    if not self._bus_unavailable(exc):
-                        raise
-                    try:
-                        identity = ec.enter_and_identify()
-                    except TransportError as entry_error:
-                        if "ENTERDBGR_NO_ACK" not in str(entry_error):
-                            raise
-                        bus.close()
-                        bus = None
-                        self.status.emit("EC debug entry needs a target reset.")
-                        self.wait_for_target_reset()
-                        bus = PicoTransport(self.port, timeout=5)
-                        bus.pins(*self.pins)
-                        ec = ECProbe(bus, page_mode=True)
-                        identity = self.enter_after_power_cycle(ec)
-                else:
-                    self.status.emit("EC debug session is active; continuing without a power cycle.")
-            else:
-                bus = PicoTransport(self.port, timeout=5)
-                bus.pins(*self.pins)
-                ec = ECProbe(bus, page_mode=page_mode)
-                if page_mode and self.action == "connect":
-                    try:
-                        identity = ec.identify()
-                    except TransportError as exc:
-                        if not self._bus_unavailable(exc):
-                            raise
-                        try:
-                            identity = ec.enter_and_identify()
-                        except TransportError as entry_error:
-                            if "ENTERDBGR_NO_ACK" not in str(entry_error):
-                                raise
-                            bus.close()
-                            bus = None
-                            self.status.emit("EC debug entry needs a target reset.")
-                            self.wait_for_target_reset()
-                            bus = PicoTransport(self.port, timeout=5)
-                            bus.pins(*self.pins)
-                            ec = ECProbe(bus, page_mode=True)
-                            identity = self.enter_after_power_cycle(ec)
-                else:
-                    identity = ec.enter_and_identify()
-            if self.action != "connect" and self.expected_identity != identity:
-                raise RuntimeError(
-                    f"EC identity changed: 0x{identity[0]:04X}/0x{identity[1]:02X}"
-                )
-            if self.action == "connect":
-                detected_protocol = None
-                if page_mode:
-                    try:
-                        detected_protocol = ec.flash_protocol(identity)
-                    except Exception as exc:
-                        self.status.emit(f"Flash protocol unavailable: {exc}")
-                try:
-                    hold_active = bus.command("HOLDDBGR") == "HOLDDBGR ACTIVE"
-                except TransportError:
-                    hold_active = False
-                self.finished.emit("connect", (identity, hold_active, detected_protocol))
-            elif self.action == "read":
-                if not self.profile.read_protocol:
-                    raise RuntimeError("Read is unavailable for this family")
-                if self.read_size not in READ_SIZES:
-                    raise RuntimeError("No valid read size selected")
-                self.status.emit(f"Reading {self.read_size // 1024} KiB from address 0...")
-                data = ec.read_flash(
-                    self.read_size,
-                    lambda done, total: self.progress.emit(done * 100 // total),
-                )
-                self.finished.emit("read", (identity, data))
-            elif self.action in ("write", "erase"):
-                flash_protocol = ec.flash_protocol(identity)
-                size = self.read_size
-                if size not in FLASH_SIZES:
-                    raise RuntimeError("Select a supported flash size")
-                image = None
-                if self.action == "write":
-                    image = Path(self.image_path).read_bytes()
-                    if len(image) != size:
-                        raise RuntimeError(f"Image must be {size} bytes")
-                    self.status.emit(f"Image SHA-256 {hashlib.sha256(image).hexdigest()}")
-                self.status.emit("Erasing EC flash...")
-                destructive_started = True
-                erase_end = 40 if image is not None else 100
-                ec.erase_flash(size, flash_protocol, lambda done, total:
-                               self.progress.emit(done * erase_end // total))
-                if image is not None:
-                    availability = {
-                        "aai_legacy": "fast_aai_available",
-                        "aai_v2": "fast_aai_v2_available",
-                        "page_program": "fast_page_available",
-                    }
-                    fast = getattr(bus, availability[flash_protocol.program_method],
-                                   lambda: False)()
-                    if (flash_protocol.program_method == "aai_v2" and
-                            getattr(bus, "fast_aai_v2_256_available", lambda: False)()):
-                        self.status.emit("Programming EC flash (AAI v2, 256-byte Pico blocks)...")
-                    elif (flash_protocol.program_method == "aai_legacy" and
-                          getattr(bus, "fast_aai256_available", lambda: False)()):
-                        self.status.emit("Programming EC flash (AAI, 256-byte Pico blocks)...")
-                    elif fast:
-                        self.status.emit("Programming EC flash (64-byte Pico blocks)...")
-                    else:
-                        self.status.emit(
-                            f"Programming EC flash ({flash_protocol.name}, "
-                            f"{flash_protocol.program_method}, USB fallback)..."
-                        )
-                    ec.write_flash(image, flash_protocol, lambda done, total:
-                                   self.progress.emit(40 + done * 40 // total))
-                    self.status.emit("Verifying every byte...")
-                    ec.verify_flash(image, lambda done, total:
-                                    self.progress.emit(80 + done * 20 // total))
-                self.finished.emit(self.action, identity)
-        except Exception as exc:
-            detail = f"{type(exc).__name__}: {exc}"
-            if destructive_started:
-                detail = ("Flash operation stopped after erase began. The EC may not boot. "
-                          + detail)
-            self.failed.emit(detail)
-        finally:
-            if bus:
-                try:
-                    bus.close()
-                except Exception as exc:
-                    self.failed.emit(f"USB release failed: {exc}")
+from .operations import Worker, READ_SIZES, resolve_read_size
+from .session import validate_ite_pins
+from .version import VERSION, BUILD_ID
 
 
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("EC Programmer")
+        self.setWindowTitle(f"EC Programmer {VERSION}")
         self.setStyleSheet(STYLESHEET)
         self.resize(1050, 1010)
         self.setMinimumSize(1050, 560)
+        available = self.screen().availableGeometry()
+        self.resize(1050, max(560, min(1010, available.height() - 60)))
         self.thread = None
+        self._close_when_idle = False
+        self._shutdown_complete = False
+        self._pending_operation = None
+        self.power_prompt = None
         self.pending_read = None
         self.pending_identity = None
         self.connected_identity = None
@@ -287,14 +100,16 @@ class Window(QMainWindow):
         for profile in FAMILIES_BY_MANUFACTURER["ITE"]:
             self.model.addItem(profile.name, profile)
         row.addWidget(self.model, 2)
-        row.addWidget(QLabel("SDA"))
+        self.sda_label = QLabel("SDA")
+        row.addWidget(self.sda_label)
         self.sda = QSpinBox()
         self.sda.setFixedWidth(82)
         self.sda.setRange(0, 28)
         self.sda.setValue(7)
         self.sda.setToolTip("Pico GPIO connected to EC SDA")
         row.addWidget(self.sda)
-        row.addWidget(QLabel("SCL"))
+        self.scl_label = QLabel("SCL")
+        row.addWidget(self.scl_label)
         self.scl = QSpinBox()
         self.scl.setFixedWidth(82)
         self.scl.setRange(0, 28)
@@ -303,6 +118,13 @@ class Window(QMainWindow):
         row.addWidget(self.scl)
         for spin in (self.sda, self.scl):
             spin.lineEdit().setTextMargins(10, 0, 2, 0)
+        self.ene_wiring = QLabel("EDI: GP4=DO, GP5=CS, GP6=CLK, GP7=DI; KSO3=GND")
+        self.ene_wiring.setToolTip(
+            "EC KSI7 -> GP4, KSI4 -> GP5, KSI5 -> GP6, KSI6 -> GP7; "
+            "KSO3 -> GND and a common Pico/board ground. Power the EC from its board."
+        )
+        self.ene_wiring.hide()
+        row.addWidget(self.ene_wiring)
         row.addWidget(QLabel("Size"))
         self.flash_size = QComboBox()
         self.flash_size.setFixedWidth(130)
@@ -353,6 +175,7 @@ class Window(QMainWindow):
         operation_hint.setWordWrap(True)
         operations_layout.addWidget(operation_hint)
         self.progress = QProgressBar()
+        self.progress.setFormat("%p%")
         operations_layout.addWidget(self.progress)
         self.status = QLabel("Ready")
         self.status.setWordWrap(True)
@@ -391,6 +214,7 @@ class Window(QMainWindow):
         self.model.setCurrentIndex(i)
         self.on_model_changed()
         self.note("Select a family and connect to the EC.")
+        self.log.appendPlainText(f"Application {VERSION} | Build {BUILD_ID}")
 
     def note(self, message):
         self.log.appendPlainText(f"{datetime.now():%Y-%m-%d %H:%M:%S}  {message}")
@@ -448,10 +272,16 @@ class Window(QMainWindow):
         protocol = (f"{self.connected_protocol.name} "
                     f"({self.connected_protocol.program_method})"
                     if self.connected_protocol else "unavailable")
-        self.identity.setText(
-            f"CHIPID 0x{chip:04X} | CHIPVER 0x{version:02X} | "
-            f"Flash size: {selected} | Flash protocol: {protocol}"
-        )
+        if self.manufacturer.currentText() == "ENE":
+            self.identity.setText(
+                f"ENE KB9052 | HWVERSION 0x{chip:02X} | EDIID 0x{version:02X} | "
+                f"Flash size: {selected} | Flash protocol: {protocol}"
+            )
+        else:
+            self.identity.setText(
+                f"CHIPID 0x{chip:04X} | CHIPVER 0x{version:02X} | "
+                f"Flash size: {selected} | Flash protocol: {protocol}"
+            )
 
     def on_flash_size_changed(self):
         self.update_identity_label()
@@ -462,6 +292,16 @@ class Window(QMainWindow):
 
     def on_manufacturer_changed(self):
         families = FAMILIES_BY_MANUFACTURER.get(self.manufacturer.currentText(), ())
+        ene = self.manufacturer.currentText() == "ENE"
+        for widget in (self.sda_label, self.sda, self.scl_label, self.scl):
+            widget.setVisible(not ene)
+        self.ene_wiring.setVisible(ene)
+        for index in range(1, self.flash_size.count()):
+            item = self.flash_size.model().item(index)
+            if item is not None:
+                item.setEnabled(not ene or self.flash_size.itemData(index) == ENE_FLASH_SIZE)
+        if ene:
+            self.flash_size.setCurrentIndex(self.flash_size.findData(ENE_FLASH_SIZE))
         self.model.blockSignals(True)
         self.model.clear()
         for profile in families:
@@ -469,7 +309,7 @@ class Window(QMainWindow):
         self.model.blockSignals(False)
         self.on_model_changed()
 
-    def start(self, action):
+    def start(self, action, image_path=None, confirmed=False):
         if self.thread is not None:
             return
         if action == "read" and self.pending_read is not None:
@@ -478,6 +318,12 @@ class Window(QMainWindow):
         profile = self.model.currentData()
         if not profile or not self.port.currentData():
             return
+        if profile.transport == "ite":
+            try:
+                validate_ite_pins(self.sda.value(), self.scl.value())
+            except ValueError as exc:
+                QMessageBox.information(self, "Select GPIO pins", str(exc))
+                return
         if action in ("read", "write", "erase") and self.connected_identity is None:
             return
         read_size = None
@@ -487,12 +333,11 @@ class Window(QMainWindow):
             except ValueError as exc:
                 QMessageBox.information(self, "Select flash size", str(exc))
                 return
-        image_path = None
         if action in ("write", "erase"):
             if (self.connected_protocol is None or
                     self.flash_size.currentData() not in FLASH_SIZES):
                 return
-            if action == "write":
+            if action == "write" and image_path is None:
                 image_path, _ = QFileDialog.getOpenFileName(
                     self, "Select EC firmware image", str(Path.home()),
                     "Binary image (*.bin);;All files (*)"
@@ -512,14 +357,23 @@ class Window(QMainWindow):
             message = (f"This will {label} the EC flash. "
                        + ("The written image will be verified. " if action == "write" else "")
                        + "Continue?")
-            if QMessageBox.question(self, "Confirm EC flash operation", message,
+            if not confirmed and QMessageBox.question(self, "Confirm EC flash operation", message,
                                     QMessageBox.StandardButton.Yes |
                                     QMessageBox.StandardButton.No,
                                     QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
                 return
-        self.progress.setValue(0)
-        self.note("Connecting to EC..." if action == "connect" else
-                  "Checking the EC debug session...")
+            # Native dialogs process Qt events. A keepalive may have acquired
+            # USB while the user selected/confirmed the image. Queue behind it.
+            if self.thread is not None:
+                self._pending_operation = (action, image_path)
+                return
+            if self.connected_identity is None:
+                return
+        if action not in ("keepalive", "disconnect"):
+            self.progress.setValue(0)
+            self.note("Connecting to EC..." if action == "connect" else
+                      ("Opening the ENE EDI session..." if profile.transport == "ene_edi"
+                       else "Checking the EC debug session..."))
         self.thread = QThread()
         self.worker = Worker(action, self.port.currentData(),
                              (self.sda.value(), self.scl.value()), profile,
@@ -532,6 +386,7 @@ class Window(QMainWindow):
         self.worker.power_cycle_needed.connect(self.show_power_cycle_prompt)
         self.worker.finished.connect(self.on_finished)
         self.worker.failed.connect(self.on_failed)
+        self.worker.warning.connect(self.on_warning)
         self.worker.finished.connect(self.thread.quit)
         self.worker.failed.connect(self.thread.quit)
         self.thread.finished.connect(self.worker.deleteLater)
@@ -543,19 +398,30 @@ class Window(QMainWindow):
         continuation = ("Connection will continue automatically." if
                         self.worker.action == "connect" else
                         "The operation will start automatically.")
-        QMessageBox.information(
-            self,
+        self.power_prompt = QMessageBox(
+            QMessageBox.Icon.Information,
             "Power cycle the EC",
             "Pico is ready. If the laptop adapter is plugged in, unplug it for "
             "5 seconds, then reconnect it. If it is already unplugged, connect it now. "
             "Keep Pico and the EC wires connected. "
-            + continuation,
+            + continuation, QMessageBox.StandardButton.Ok, self,
         )
+        self.power_prompt.show()
 
     def on_finished(self, action, result):
+        if self.power_prompt is not None:
+            self.power_prompt.close()
+            self.power_prompt.deleteLater()
+            self.power_prompt = None
+        if action == "keepalive":
+            return
+        if action == "disconnect":
+            self.reset_identity()
+            return
         if action == "connect":
             (chip, version), hold_active, detected_protocol = result
-            if self.model.currentData().read_protocol and (chip & 0xF000) != 0x8000:
+            if self.manufacturer.currentText() == "ITE" and \
+                    self.model.currentData().read_protocol and (chip & 0xF000) != 0x8000:
                 self.note(f"Identified 0x{chip:04X}/0x{version:02X}, outside the selected IT8xxx family.")
                 self.reset_identity()
                 return
@@ -590,8 +456,10 @@ class Window(QMainWindow):
         if self.pending_read is None:
             return
         chip = self.pending_identity[0] if self.pending_identity else 0
+        prefix = (f"ENE-KB9052-HW{chip:02X}" if self.manufacturer.currentText() == "ENE"
+                  else f"ITE-{chip:04X}")
         suggested = Path.home() / (
-            f"ITE-{chip:04X}-{len(self.pending_read) // 1024}KiB-"
+            f"{prefix}-{len(self.pending_read) // 1024}KiB-"
             f"{datetime.now():%Y%m%d-%H%M%S}.bin"
         )
         path, _ = QFileDialog.getSaveFileName(
@@ -612,27 +480,36 @@ class Window(QMainWindow):
         self.update_buttons()
 
     def on_failed(self, message):
+        if self.power_prompt is not None:
+            self.power_prompt.close()
+            self.power_prompt.deleteLater()
+            self.power_prompt = None
         self.note("ERROR: " + message)
+        self.reset_identity()
         if self.worker.action in ("write", "erase"):
             QMessageBox.critical(self, "EC flash operation stopped", message)
 
+    def on_warning(self, message):
+        self.note("WARNING: " + message)
+        self.reset_identity()
+
     def refresh_debug_hold(self):
-        if self.thread is not None or self.connected_identity is None:
+        if (self.thread is not None or self.connected_identity is None or
+                self.manufacturer.currentText() == "ENE"):
             return
-        try:
-            with PicoTransport(self.port.currentData(), timeout=2) as bus:
-                bus.pins(self.sda.value(), self.scl.value())
-                if bus.command("HOLDDBGR") != "HOLDDBGR ACTIVE":
-                    raise TransportError("EC debug hold expired")
-                bus.read_page(0)
-        except Exception as exc:
-            self.note(f"EC connection lost: {exc}")
-            self.reset_identity()
+        self.start("keepalive")
 
     def on_thread_finished(self):
         self.thread.deleteLater()
         self.thread = None
         self.update_buttons()
+        if self._close_when_idle:
+            self._pending_operation = None
+            self.close()
+        elif self._pending_operation is not None:
+            action, image_path = self._pending_operation
+            self._pending_operation = None
+            self.start(action, image_path, confirmed=True)
 
     def save_log(self):
         path, _ = QFileDialog.getSaveFileName(self, "Save log", "pico-ec-log.txt", "Text (*.txt)")
@@ -645,7 +522,11 @@ class Window(QMainWindow):
 
     def closeEvent(self, event):
         if self.thread is not None:
-            QMessageBox.information(self, "Operation in progress", "Wait for it to finish.")
+            if self.worker.action in ("keepalive", "disconnect"):
+                self._close_when_idle = True
+                self.keepalive.stop()
+            else:
+                QMessageBox.information(self, "Operation in progress", "Wait for it to finish.")
             event.ignore()
         elif self.pending_read is not None:
             answer = QMessageBox.question(
@@ -654,10 +535,18 @@ class Window(QMainWindow):
             if answer != QMessageBox.StandardButton.Yes:
                 event.ignore()
             else:
-                event.accept()
+                self.pending_read = None
+                self.pending_identity = None
+                self.closeEvent(event)
         else:
             self.keepalive.stop()
-            event.accept()
+            if self.connected_identity is not None and not self._shutdown_complete:
+                self._shutdown_complete = True
+                self._close_when_idle = True
+                self.start("disconnect")
+                event.ignore()
+            else:
+                event.accept()
 
 
 def main():
@@ -665,4 +554,7 @@ def main():
     app.setStyle("Fusion")
     window = Window()
     window.show()
+    if "--smoke-test" in sys.argv:
+        # Build-time startup check; only enumerates ports, never opens them.
+        QTimer.singleShot(300, window.close)
     return app.exec()

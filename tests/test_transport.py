@@ -92,6 +92,83 @@ class TransportTests(unittest.TestCase):
         self.assertFalse(bus.fast_aai_available())
         self.assertEqual(bus.port.written.count(b"CAPS\n"), 1)
 
+    def test_tagged_command_ignores_late_response(self):
+        bus = transport.PicoTransport("COM1")
+        bus.port.replies.append(b"CAPS TAGGED REGIO\n")
+        self.assertTrue(bus.supports("REGIO"))
+        bus._sequence = 10
+        bus.port.replies += [b"DATA FF\n", b"@0000000A OK\n", b"@0000000B REG 02 03\n"]
+        self.assertEqual(bus.reg_read(2), 3)
+        self.assertEqual(bus.port.written[-1], b"@0000000B REGREAD 02\n")
+
+    def test_timeout_prevents_release_or_further_commands(self):
+        bus = transport.PicoTransport("COM1")
+        with self.assertRaisesRegex(transport.TransportError, "Timeout"):
+            bus.command("READPAGE 000000")
+        written = list(bus.port.written)
+        bus.port.replies.append(b"PAGE 000000 FF\n")
+        with self.assertRaisesRegex(transport.TransportError, "out of sync"):
+            bus.command("HELLO")
+        bus.close()
+        self.assertFalse(bus.port.is_open)
+        self.assertEqual(bus.port.written, written)
+
+    def test_partial_line_poisoned_and_no_release_queued(self):
+        bus = transport.PicoTransport("COM1")
+        bus.port.replies.append(b"AAI256 000100 O")
+        with self.assertRaisesRegex(transport.TransportError, "incomplete"):
+            bus.program256(0x100, b"\x42" * 256)
+        bus.close()
+        self.assertNotIn(b"RELEASE\n", bus.port.written)
+
+    def test_release_cannot_accept_late_data_as_success(self):
+        bus = transport.PicoTransport("COM1")
+        bus.port.replies.append(b"DATA FF\n")
+        with self.assertRaisesRegex(transport.TransportError, "RELEASE acknowledgement"):
+            bus.close()
+        self.assertFalse(bus.port.is_open)
+
+    def test_handshake_discards_previous_commands_reply(self):
+        port = FakePort()
+        port.replies.insert(0, b"@00000001 AAI64 000000 OK\n")
+        with patch.object(transport.serial, "Serial", return_value=port):
+            bus = transport.PicoTransport("COM1")
+        self.assertTrue(bus.port.is_open)
+
+    def test_legacy_probe_handshake_accepts_crlf(self):
+        port = FakePort()
+        port.replies = [b"OK PICO_EC_PROBE 1 PROBE_ONLY\r\n"]
+        with patch.object(transport.serial, "Serial", return_value=port):
+            self.assertTrue(transport.PicoTransport("COM1").port.is_open)
+
+    def test_bad_page_address_rejected_before_usb(self):
+        bus = transport.PicoTransport("COM1")
+        before = list(bus.port.written)
+        for address in (-1, 1, 0x40000):
+            with self.assertRaises(ValueError):
+                bus.read_page(address)
+        self.assertEqual(bus.port.written, before)
+
+    def test_context_cleanup_does_not_replace_primary_error(self):
+        bus = transport.PicoTransport("COM1")
+        bus.port.replies.append(b"ERR CLEANUP\n")
+        with self.assertRaisesRegex(RuntimeError, "primary failure"):
+            with bus:
+                raise RuntimeError("primary failure")
+
+    def test_atomic_ite_replies_are_validated(self):
+        bus = transport.PicoTransport("COM1")
+        bus.port.replies += [b"STATUS 02\n", b"FLASHID FFFFFE\n",
+                            b"SESSION CHIPID=8227 CHIPVER=03\n",
+                            b"ERASESECTOR 000400 OK\n"]
+        self.assertEqual(bus.spi_status(), 2)
+        self.assertEqual(bus.flash_id(0x79), bytes.fromhex("FFFFFE"))
+        self.assertEqual(bus.session(), (0x8227, 3))
+        bus.erase_sector(0x400, 0xd7)
+        bus.port.replies.append(b"ERASESECTOR 000000 OK\n")
+        with self.assertRaises(transport.TransportError):
+            bus.erase_sector(0x400, 0xd7)
+
     def test_power_cycle_nack_allows_direct_entry_attempt(self):
         calls = []
 

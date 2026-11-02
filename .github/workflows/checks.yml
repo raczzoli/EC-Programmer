@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: 2026 R89 Repairs and contributors
+# SPDX-License-Identifier: GPL-2.0-or-later
+name: Tests and firmware builds
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  tests:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements-release.txt
+            requirements-test.txt
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libopengl0
+      - run: python -m pip install -r requirements-release.txt -r requirements-test.txt
+      - run: python -m unittest discover -s tests -v
+      - run: python -m app --smoke-test
+  firmware:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        board: [pico, pico_w, pico2, pico2_w, waveshare_rp2040_zero, waveshare_rp2350_zero, waveshare_rp2350_usb_a, seeed_xiao_rp2040, seeed_xiao_rp2350]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: raspberrypi/pico-sdk
+          ref: '2.3.1'
+          path: vendor/pico-sdk
+          submodules: recursive
+      - run: sudo apt-get update && sudo apt-get install -y cmake ninja-build gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib libusb-1.0-0-dev
+      - name: Configure
+        run: cmake -S firmware -B firmware/build-ci -G Ninja -DPICO_SDK_PATH="$GITHUB_WORKSPACE/vendor/pico-sdk" -DPICO_BOARD=${{ matrix.board }} -DEC_BUILD_ID=${{ github.sha }} -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build firmware/build-ci --parallel 4
+      - name: Validate UF2 metadata
+        run: python -c "from pathlib import Path; from devtools.build_release import check_uf2; check_uf2(Path('firmware/build-ci/pico_ec_probe.uf2'), '${{ matrix.board }}', '${{ github.sha }}')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.board }}
+          path: firmware/build-ci/pico_ec_probe.uf2
