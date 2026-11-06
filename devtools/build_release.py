@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 R89 Repairs and contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-"""Build an isolated candidate. No USB devices or existing releases are touched."""
+"""Build the current release in release/. No USB devices are accessed."""
 import argparse
 import hashlib
 import importlib.metadata
@@ -20,6 +20,7 @@ BOARDS = {
     "pico2": "Pico-2-RP2350.uf2",
     "pico2_w": "Pico-2-W-RP2350.uf2",
     "waveshare_rp2040_zero": "Waveshare-RP2040-Zero.uf2",
+    "waveshare_rp2350_tiny": "Waveshare-RP2350-Tiny.uf2",
     "waveshare_rp2350_zero": "Waveshare-RP2350-Zero.uf2",
     "waveshare_rp2350_usb_a": "Waveshare-RP2350-USB-A.uf2",
     "seeed_xiao_rp2040": "Seeed-XIAO-RP2040.uf2",
@@ -106,9 +107,9 @@ def main():
         parser.error("Pico SDK missing; provide --sdk or PICO_SDK_PATH")
     run([sys.executable, "-m", "unittest", "discover", "-s", "tests"])
     identity = source_identity()
-    output = ROOT / "release-candidate" / (identity["version"] + "-" + identity["build_id"])
+    output = ROOT / "release"
     output.mkdir(parents=True, exist_ok=True)
-    print(f"Candidate: {output}", flush=True)
+    print(f"Release: {output}", flush=True)
     boards = list(BOARDS) if args.board == "all" else [args.board]
     for board in boards:
         print(f"Building {board}", flush=True)
@@ -133,7 +134,7 @@ def main():
         shutil.copy2(ROOT / "docs/THIRD_PARTY.md", output / "app/THIRD_PARTY.txt")
         shutil.copytree(ROOT / "docs/licenses", output / "app/licenses", dirs_exist_ok=True)
     if source_identity()["build_id"] != identity["build_id"]:
-        raise RuntimeError("Source changed during the build; rebuild the candidate")
+        raise RuntimeError("Source changed during the build; rebuild the release")
     identity["boards"] = [board for board, filename in BOARDS.items()
                           if (output / "pico-firmwares" / filename).exists()]
     identity["python"] = sys.version.split()[0]
@@ -142,21 +143,25 @@ def main():
     (output / "build-info.json").write_text(json.dumps(identity, indent=2) + "\n")
     (output / "README.txt").write_text(
         f"EC Programmer {identity['version']} / {identity['build_id']}\n\n"
-        "Candidate build: automated tests passed; physical ITE validation is pending.\n"
+        "Automated tests passed. See docs/ENE.md for hardware validation status.\n"
         "app/ contains the Windows GUI; pico-firmwares/ contains board-specific UF2 files.\n"
         "Install only the UF2 matching your board. Pico 2 H uses Pico-2-RP2350.uf2.\n"
         "Default ITE pins: GP7 SDA, GP6 SCL, common GND. Default timing is unchanged.\n"
         "Read saves after completion. Write erases, programs and verifies; no automatic backup.\n"
-        "Select the actual flash size (64/128/192/256 KiB). ENE remains experimental.\n"
-        "The existing release/ directory is preserved for rollback.\n"
+        "Size: numeric/manual for ITE (64/128/192/256 KiB); automatic and locked for ENE.\n"
+        "ENE is experimental. GP4 DO, GP5 CS, GP6 CLK, GP7 DI, common GND; confirm target strap/pins.\n"
+        "ENE models: KB9012QF, KB9022Q, KB9028Q, KB9052QD (128 KiB).\n"
         "Source and instructions: https://github.com/raczzoli/EC-Programmer\n"
     )
     entries = []
-    for path in sorted(output.rglob("*")):
-        if path.is_file() and path.name != "SHA256SUMS.txt":
+    release_files = [output / "README.txt", output / "build-info.json"]
+    for folder in ("app", "pico-firmwares"):
+        release_files.extend((output / folder).rglob("*"))
+    for path in sorted(release_files):
+        if path.is_file():
             entries.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.relative_to(output).as_posix()}")
     (output / "SHA256SUMS.txt").write_text("\n".join(entries) + "\n")
-    print(f"Candidate ready: {output}", flush=True)
+    print(f"Release ready: {output}", flush=True)
 
 
 if __name__ == "__main__":

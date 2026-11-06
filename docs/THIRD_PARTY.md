@@ -19,8 +19,12 @@
 - ENE EDI register access and page erase/program/read sequences in
   `firmware/ene_edi.c` and `app/ene.py` were adapted from
   [flashrom edi.c](https://github.com/flashrom/flashrom/blob/main/edi.c) by
-  Paul Kocialkowski, GPL-2.0-or-later. The KB9052B/D HWVERSION and EDIID
-  pairs were published by [Jack O'Neo in his flashrom extension notes](https://eletronicabr.com/forums/topic/111881-ler-e-gravar-kbc-ene-kb90xx-com-o-gravador-ch341a-usando-flashrom-no-mint-linux/).
+  Paul Kocialkowski and flashrom contributors, GPL-2.0-or-later. The common
+  ENE engine and KB9542GF F0/07 entry behavior follow upstream flashrom;
+  additional group signatures were published by
+  [Jack O'Neo and contributors in his flashrom extension notes](https://eletronicabr.com/forums/topic/111881-ler-e-gravar-kbc-ene-kb90xx-com-o-gravador-ch341a-usando-flashrom-no-mint-linux/).
+  [ENE implementation notes](ENE.md) distinguish the two sources and
+  the revision-specific watchdog behavior.
 
 The Raspberry Pi Pico SDK, Arm toolchain, and local build caches are not
 included in the source repository. UF2 binaries link Pico SDK and TinyUSB code;

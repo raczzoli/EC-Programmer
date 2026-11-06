@@ -36,6 +36,8 @@ class WriteSafetyTests(unittest.TestCase):
                         selected_size)
         worker.finished.connect(lambda name, result: finished.append((name, result)))
         worker.failed.connect(failed.append)
+        self.phases = []
+        worker.phase.connect(self.phases.append)
         worker.finished.connect(lambda *args: self.terminal_events.append("finished"))
         worker.failed.connect(lambda *args: self.terminal_events.append("failed"))
         worker.warning.connect(self.warnings.append)
@@ -81,6 +83,7 @@ class WriteSafetyTests(unittest.TestCase):
             self.assertEqual(failed, [])
             self.assertEqual(events, ["profile", "erase", "write", "verify_image"])
             self.assertEqual(finished, [("write", (0x8227, 2))])
+            self.assertEqual(self.phases, ["Erase", "Programming", "Verification"])
 
     def test_erase_only_erases_without_read_or_verify(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -88,6 +91,7 @@ class WriteSafetyTests(unittest.TestCase):
             self.assertEqual(failed, [])
             self.assertEqual(events, ["profile", "erase"])
             self.assertEqual(finished, [("erase", (0x8227, 2))])
+            self.assertEqual(self.phases, ["Erase"])
 
     def test_wrong_image_size_stops_before_erase(self):
         with tempfile.TemporaryDirectory() as directory:

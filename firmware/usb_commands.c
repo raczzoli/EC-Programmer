@@ -31,7 +31,7 @@ static bool parse_hex(const char *s, uint8_t *buf, size_t capacity, size_t *len)
 static void dispatch(char *cmd) {
     unsigned a, b; char hex[MAX_XFER*2+1]; uint8_t buf[MAX_XFER]; size_t len; int used;
     if (!strcmp(cmd,"HELLO")) { usb_puts("OK PICO_ITE_EC_PROGRAMMER 2"); return; }
-    if (!strcmp(cmd,"CAPS")) { usb_puts("CAPS AAI64 AAI256 AAIV2_64 AAIV2_256 PAGE64 ENE_EDI TAGGED REGIO SPISTATUS FLASHID ERASESECTOR SESSION INFO I2CTIMING"); return; }
+    if (!strcmp(cmd,"CAPS")) { usb_puts("CAPS AAI64 AAI256 AAIV2_64 AAIV2_256 PAGE64 ENE_EDI ENE_EDI_V2 TAGGED REGIO SPISTATUS FLASHID ERASESECTOR SESSION INFO I2CTIMING"); return; }
     if (!strcmp(cmd,"INFO")) {
         usb_printf("INFO VERSION=%s BUILD=%s BOARD=%s I2C_DELAY_US=%u\n",
                    EC_VERSION, EC_BUILD_ID, EC_BOARD, bus_timing());
@@ -57,10 +57,15 @@ static void dispatch(char *cmd) {
         usb_puts(okay ? "OK" : "ERR ENE_CLOSE");
         return;
     }
-    if (!strcmp(cmd,"ENEOPEN")) {
+    if (!strcmp(cmd,"ENEOPEN") || !strncmp(cmd,"ENEOPEN ",8)) {
+        char family[16] = "KB9052"; /* Preserve the old KB9052-only command. */
+        if (strcmp(cmd,"ENEOPEN") &&
+            (sscanf(cmd,"ENEOPEN %15s%n",family,&used)!=1 || cmd[used]!=0)) {
+            usb_puts("ERR ENEOPEN_FAMILY"); return;
+        }
         uint8_t hw = 0, id = 0;
         if (!ene_is_open()) dbgr_end_session();
-        if (!ene_open(&hw, &id)) {
+        if (!ene_open_family(family, &hw, &id)) {
             usb_printf("ERR %s HW=%02X EDI=%02X\n", ene_error(), hw, id);
             return;
         }

@@ -17,7 +17,9 @@ laptop boards or individual ITE part numbers. Capacity remains a user selection.
   request are ignored. After a timeout, this connection sends no more commands.
 - `app/ec.py`: ITE operations and compatibility paths for older Pico firmware.
 - `app/geometry.py`: common supported capacities and page geometry.
-- `app/ene.py`: the pre-existing experimental ENE backend, outside this ITE refactor.
+- `app/ene.py`: common experimental ENE EDI flash engine; compatibility groups
+  and selected ranges are in `app/ene_families.py`. Physical models, pinouts and
+  identity restrictions are in `app/ene_models.py`. See [ENE](ENE.md).
 
 The worker negotiates required capabilities before erase. Write remains
 erase → program → full verification, without an automatic backup or erased-flash
@@ -35,7 +37,8 @@ keepalive before acquiring USB.
 - `ite_dbgr.c`: waveform, GPIO mapping, reset-time entry and register access.
 - `ite_session.c`: watchdog hold, expiry and register-cursor restoration.
 - `ite_flash.c`: page reads, sector erase, legacy AAI, newer AAI and page program.
-- `ene_edi.c`: the existing experimental EDI implementation.
+- `ene_edi.c`: common EDI transport/page engine, with hardware revision
+  parameters for capacity bounds and entry/watchdog behavior.
 
 The PIO tail wait includes all 16 states that can remain after its FIFO empties.
 Waveform contents, rates and SDA/SCL mapping are preserved. I²C retains the

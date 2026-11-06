@@ -25,6 +25,7 @@ class PicoTransport:
         "AAI64": 25, "AAI256": 25, "AAIV2_64": 25,
         "AAIV2_256": 25, "PAGE64": 25, "ERASESECTOR": 25,
         "ENTERDBGR": 8, "WAVESWEEP": 8, "WAVEPOWER": 50,
+        "ENEOPEN": 15,
     }
     @staticmethod
     def wait_power_cycle(port, pins, status=lambda message: None):

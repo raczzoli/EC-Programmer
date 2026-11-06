@@ -14,13 +14,13 @@ from PySide6.QtWidgets import (
     QScrollArea, QSizePolicy, QSpinBox, QVBoxLayout, QWidget,
 )
 
-from .ec import FLASH_SIZES, save_new
-from .ene import FLASH_SIZE as ENE_FLASH_SIZE
+from .ec import save_new
 from .models import FAMILIES_BY_MANUFACTURER
+from .ene_models import ene_model
 from .style import STYLESHEET
 from .transport import ports
 
-from .operations import Worker, READ_SIZES, resolve_read_size
+from .operations import Worker, resolve_read_size
 from .session import validate_ite_pins
 from .version import VERSION, BUILD_ID
 
@@ -30,10 +30,10 @@ class Window(QMainWindow):
         super().__init__()
         self.setWindowTitle(f"EC Programmer {VERSION}")
         self.setStyleSheet(STYLESHEET)
-        self.resize(1050, 1010)
-        self.setMinimumSize(1050, 560)
+        self.resize(1120, 1010)
+        self.setMinimumSize(1120, 560)
         available = self.screen().availableGeometry()
-        self.resize(1050, max(560, min(1010, available.height() - 60)))
+        self.resize(1120, max(560, min(1010, available.height() - 60)))
         self.thread = None
         self._close_when_idle = False
         self._shutdown_complete = False
@@ -43,6 +43,7 @@ class Window(QMainWindow):
         self.pending_identity = None
         self.connected_identity = None
         self.connected_protocol = None
+        self._manual_flash_size_kib = 0
         self.keepalive = QTimer(self)
         self.keepalive.setInterval(5000)
         self.keepalive.timeout.connect(self.refresh_debug_hold)
@@ -89,17 +90,18 @@ class Window(QMainWindow):
         target_layout.addLayout(row)
         row.addWidget(QLabel("Manufacturer"))
         self.manufacturer = QComboBox()
-        self.manufacturer.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.manufacturer.setMinimumWidth(85)
+        self.manufacturer.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.manufacturer.setFixedWidth(190)
+        self.manufacturer.setPlaceholderText("Select brand")
         self.manufacturer.addItems(FAMILIES_BY_MANUFACTURER)
-        row.addWidget(self.manufacturer, 1)
-        row.addWidget(QLabel("Model"))
+        self.manufacturer.setCurrentIndex(-1)
+        row.addWidget(self.manufacturer)
+        row.addWidget(QLabel("Model / Family"))
         self.model = QComboBox()
-        self.model.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.model.setMinimumWidth(115)
-        for profile in FAMILIES_BY_MANUFACTURER["ITE"]:
-            self.model.addItem(profile.name, profile)
-        row.addWidget(self.model, 2)
+        self.model.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.model.setFixedWidth(190)
+        self.model.setPlaceholderText("Select model")
+        row.addWidget(self.model)
         self.sda_label = QLabel("SDA")
         row.addWidget(self.sda_label)
         self.sda = QSpinBox()
@@ -118,24 +120,27 @@ class Window(QMainWindow):
         row.addWidget(self.scl)
         for spin in (self.sda, self.scl):
             spin.lineEdit().setTextMargins(10, 0, 2, 0)
-        self.ene_wiring = QLabel("EDI: GP4=DO, GP5=CS, GP6=CLK, GP7=DI; KSO3=GND")
+        self.ene_wiring = QLabel("Select an ENE model to see its EC pin numbers.")
+        self.ene_wiring.setWordWrap(True)
+        self.ene_wiring.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.ene_wiring.setToolTip(
             "EC KSI7 -> GP4, KSI4 -> GP5, KSI5 -> GP6, KSI6 -> GP7; "
-            "KSO3 -> GND and a common Pico/board ground. Power the EC from its board."
+            "Common Pico/board GND; confirm the EC programming-mode strap (e.g. KSO3) "
+            "from its schematic. Power the EC from its board. Experimental ENE support."
         )
         self.ene_wiring.hide()
-        row.addWidget(self.ene_wiring)
         row.addWidget(QLabel("Size"))
-        self.flash_size = QComboBox()
+        self.flash_size = QSpinBox()
         self.flash_size.setFixedWidth(130)
-        self.flash_size.setToolTip(
-            "Select the EC flash size. Read, Write and Erase use this size; "
-            "Write and Erase also require a recognized flash protocol."
-        )
-        self.flash_size.addItem("Select size", None)
-        for size in READ_SIZES:
-            self.flash_size.addItem(f"{size // 1024} KiB", size)
+        self.flash_size.setRange(0, 256)
+        self.flash_size.setSingleStep(64)
+        self.flash_size.setSuffix(" KiB")
+        self.flash_size.setSpecialValueText("Set size")
+        self.flash_size.setKeyboardTracking(False)
+        self.flash_size.lineEdit().setTextMargins(10, 0, 2, 0)
         row.addWidget(self.flash_size)
+        row.addStretch(1)
+        target_layout.addWidget(self.ene_wiring)
         row = QHBoxLayout()
         target_layout.addLayout(row)
         row.addStretch(1)
@@ -168,7 +173,7 @@ class Window(QMainWindow):
         self.erase.clicked.connect(lambda: self.start("erase"))
         row.addWidget(self.erase, 1)
         operation_hint = QLabel(
-            "Read starts at address 0 and uses the selected flash size. "
+            "Read starts at address 0 and uses the displayed flash size. "
             "Write verifies the programmed image."
         )
         operation_hint.setObjectName("hint")
@@ -208,11 +213,9 @@ class Window(QMainWindow):
         self.model.currentIndexChanged.connect(self.on_model_changed)
         self.sda.valueChanged.connect(self.reset_identity)
         self.scl.valueChanged.connect(self.reset_identity)
-        self.flash_size.currentIndexChanged.connect(self.on_flash_size_changed)
+        self.flash_size.valueChanged.connect(self.on_flash_size_changed)
         self.refresh()
-        i = self.model.findText("IT8xxx")
-        self.model.setCurrentIndex(i)
-        self.on_model_changed()
+        self.on_manufacturer_changed()
         self.note("Select a family and connect to the EC.")
         self.log.appendPlainText(f"Application {VERSION} | Build {BUILD_ID}")
 
@@ -239,19 +242,23 @@ class Window(QMainWindow):
         port_selected = self.port.currentData() is not None
         profile = self.model.currentData()
         for control in (self.port, self.refresh_button, self.manufacturer,
-                        self.model, self.sda, self.scl, self.flash_size):
+                        self.sda, self.scl):
             control.setEnabled(config_enabled)
+        self.model.setEnabled(config_enabled and
+                              self.manufacturer.currentText() in FAMILIES_BY_MANUFACTURER)
+        self.flash_size.setEnabled(config_enabled and profile is not None and
+                                   profile.fixed_flash_size is None)
         self.detect.setEnabled(config_enabled and port_selected and profile is not None)
         self.read.setText("Save read…" if self.pending_read is not None else "Read")
         self.read.setEnabled(idle and (self.pending_read is not None or
                              (port_selected and profile is not None and
                               profile.read_protocol and self.connected_identity is not None and
-                              self.flash_size.currentData() in READ_SIZES)))
+                              self.flash_size_bytes() in profile.flash_sizes)))
         destructive_ready = (idle and self.pending_read is None and port_selected and
                              profile is not None and profile.read_protocol and
                              self.connected_identity is not None and
                              self.connected_protocol is not None and
-                             self.flash_size.currentData() in FLASH_SIZES)
+                             self.flash_size_bytes() in profile.flash_sizes)
         self.write.setEnabled(destructive_ready)
         self.erase.setEnabled(destructive_ready)
 
@@ -262,9 +269,18 @@ class Window(QMainWindow):
         self.update_identity_label()
         self.update_buttons()
 
+    def flash_size_bytes(self):
+        return self.flash_size.value() * 1024 or None
+
     def update_identity_label(self):
-        size = self.flash_size.currentData()
-        selected = f"{size // 1024} KiB selected" if size else "not selected"
+        size = self.flash_size_bytes()
+        profile = self.model.currentData()
+        if profile is not None and profile.fixed_flash_size is not None:
+            selected = f"{size // 1024} KiB (family)"
+        elif size and profile is not None and size not in profile.flash_sizes:
+            selected = f"{size // 1024} KiB (unsupported size)"
+        else:
+            selected = f"{size // 1024} KiB selected" if size else "not selected"
         if self.connected_identity is None:
             self.identity.setText(f"EC: not connected | Flash size: {selected}")
             return
@@ -274,7 +290,7 @@ class Window(QMainWindow):
                     if self.connected_protocol else "unavailable")
         if self.manufacturer.currentText() == "ENE":
             self.identity.setText(
-                f"ENE KB9052 | HWVERSION 0x{chip:02X} | EDIID 0x{version:02X} | "
+                f"ENE {self.model.currentText()} (experimental) | HWVERSION 0x{chip:02X} | EDIID 0x{version:02X} | "
                 f"Flash size: {selected} | Flash protocol: {protocol}"
             )
         else:
@@ -284,28 +300,53 @@ class Window(QMainWindow):
             )
 
     def on_flash_size_changed(self):
+        profile = self.model.currentData()
+        if profile is not None and profile.fixed_flash_size is None:
+            self._manual_flash_size_kib = self.flash_size.value()
         self.update_identity_label()
         self.update_buttons()
 
     def on_model_changed(self):
+        # Known capacities are fixed by the group. Preserve the user's ITE
+        # value separately so switching through ENE cannot overwrite it.
+        profile = self.model.currentData()
+        model = ene_model(profile.name) if profile and profile.transport == "ene_edi" else None
+        self.ene_wiring.setText(model.wiring if model else
+                                "Select an ENE model to see its EC pin numbers.")
+        self.ene_wiring.setToolTip(
+            (f"Source: {model.source}. " if model else "") +
+            "EC package pin numbers, not keyboard connector positions. "
+            "Disconnect power before wiring. Connect KSO3 to ground before powering "
+            "the target; use common Pico/board ground. Power the EC from its board."
+        )
+        fixed = profile.fixed_flash_size if profile else None
+        self.flash_size.blockSignals(True)
+        if fixed is not None:
+            self.flash_size.setRange(fixed // 1024, fixed // 1024)
+            self.flash_size.setSpecialValueText("")
+            self.flash_size.setValue(fixed // 1024)
+            self.flash_size.setToolTip("Flash size is fixed by the selected family.")
+        else:
+            self.flash_size.setRange(0, max(profile.flash_sizes) // 1024 if profile else 256)
+            self.flash_size.setSpecialValueText("Set size")
+            self.flash_size.setValue(self._manual_flash_size_kib if profile else 0)
+            sizes = ", ".join(str(size // 1024) for size in profile.flash_sizes) if profile else ""
+            self.flash_size.setToolTip(f"Enter the EC flash size in KiB. Supported sizes: {sizes}.")
+        self.flash_size.blockSignals(False)
         self.reset_identity()
 
     def on_manufacturer_changed(self):
         families = FAMILIES_BY_MANUFACTURER.get(self.manufacturer.currentText(), ())
         ene = self.manufacturer.currentText() == "ENE"
+        ite = self.manufacturer.currentText() == "ITE"
         for widget in (self.sda_label, self.sda, self.scl_label, self.scl):
-            widget.setVisible(not ene)
+            widget.setVisible(ite)
         self.ene_wiring.setVisible(ene)
-        for index in range(1, self.flash_size.count()):
-            item = self.flash_size.model().item(index)
-            if item is not None:
-                item.setEnabled(not ene or self.flash_size.itemData(index) == ENE_FLASH_SIZE)
-        if ene:
-            self.flash_size.setCurrentIndex(self.flash_size.findData(ENE_FLASH_SIZE))
         self.model.blockSignals(True)
         self.model.clear()
         for profile in families:
             self.model.addItem(profile.name, profile)
+        self.model.setCurrentIndex(-1)
         self.model.blockSignals(False)
         self.on_model_changed()
 
@@ -329,13 +370,13 @@ class Window(QMainWindow):
         read_size = None
         if action == "read":
             try:
-                read_size = resolve_read_size(self.flash_size.currentData())
+                read_size = resolve_read_size(self.flash_size_bytes(), profile)
             except ValueError as exc:
                 QMessageBox.information(self, "Select flash size", str(exc))
                 return
         if action in ("write", "erase"):
             if (self.connected_protocol is None or
-                    self.flash_size.currentData() not in FLASH_SIZES):
+                    self.flash_size_bytes() not in profile.flash_sizes):
                 return
             if action == "write" and image_path is None:
                 image_path, _ = QFileDialog.getOpenFileName(
@@ -349,9 +390,9 @@ class Window(QMainWindow):
                 except OSError as exc:
                     QMessageBox.critical(self, "Cannot open image", str(exc))
                     return
-                if image_size != self.flash_size.currentData():
+                if image_size != self.flash_size_bytes():
                     QMessageBox.critical(self, "Wrong image size",
-                                         f"Expected {self.flash_size.currentData()} bytes; file has {image_size}.")
+                                         f"Expected {self.flash_size_bytes()} bytes; file has {image_size}.")
                     return
             label = "erase and write" if action == "write" else "erase"
             message = (f"This will {label} the EC flash. "
@@ -370,6 +411,7 @@ class Window(QMainWindow):
             if self.connected_identity is None:
                 return
         if action not in ("keepalive", "disconnect"):
+            self.set_progress_phase("Erase" if action in ("erase", "write") else "Read")
             self.progress.setValue(0)
             self.note("Connecting to EC..." if action == "connect" else
                       ("Opening the ENE EDI session..." if profile.transport == "ene_edi"
@@ -378,10 +420,11 @@ class Window(QMainWindow):
         self.worker = Worker(action, self.port.currentData(),
                              (self.sda.value(), self.scl.value()), profile,
                              self.connected_identity, image_path,
-                             self.flash_size.currentData())
+                             self.flash_size_bytes())
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.progress.connect(self.progress.setValue)
+        self.worker.phase.connect(self.set_progress_phase)
         self.worker.status.connect(self.note)
         self.worker.power_cycle_needed.connect(self.show_power_cycle_prompt)
         self.worker.finished.connect(self.on_finished)
@@ -393,6 +436,10 @@ class Window(QMainWindow):
         self.thread.finished.connect(self.on_thread_finished)
         self.update_buttons()
         self.thread.start()
+
+    def set_progress_phase(self, phase):
+        color = {"Erase": "#dc2626", "Programming": "#ea580c"}.get(phase, "#15803d")
+        self.progress.setStyleSheet(f"QProgressBar::chunk {{ background: {color}; }}")
 
     def show_power_cycle_prompt(self):
         continuation = ("Connection will continue automatically." if
@@ -428,10 +475,10 @@ class Window(QMainWindow):
             self.connected_identity = (chip, version)
             self.connected_protocol = detected_protocol
             self.update_identity_label()
-            if detected_protocol is not None and self.flash_size.currentData() in FLASH_SIZES:
+            if detected_protocol is not None and self.flash_size_bytes() in self.model.currentData().flash_sizes:
                 self.note("EC connected. Read, Write and Erase are available.")
             elif self.model.currentData().read_protocol:
-                if self.flash_size.currentData() in READ_SIZES:
+                if self.flash_size_bytes() in self.model.currentData().flash_sizes:
                     self.note("EC connected. Read is available for the selected size.")
                 else:
                     self.note("EC connected. Select a flash size to enable Read.")
@@ -445,7 +492,7 @@ class Window(QMainWindow):
             self.update_identity_label()
             self.pending_read = data
             self.pending_identity = identity
-            self.note(f"Read complete: {len(data)} bytes (selected size). Choose where to save.")
+            self.note(f"Read complete: {len(data)} bytes. Choose where to save.")
             self.save_read()
         elif action in ("write", "erase"):
             self.note("Write complete and verified." if action == "write" else "Erase complete.")
@@ -456,7 +503,7 @@ class Window(QMainWindow):
         if self.pending_read is None:
             return
         chip = self.pending_identity[0] if self.pending_identity else 0
-        prefix = (f"ENE-KB9052-HW{chip:02X}" if self.manufacturer.currentText() == "ENE"
+        prefix = (f"ENE-{self.model.currentText().replace(' ', '')}-HW{chip:02X}" if self.manufacturer.currentText() == "ENE"
                   else f"ITE-{chip:04X}")
         suggested = Path.home() / (
             f"{prefix}-{len(self.pending_read) // 1024}KiB-"

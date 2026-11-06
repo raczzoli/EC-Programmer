@@ -65,7 +65,10 @@ class NativeFirmwareTests(unittest.TestCase):
                     "ERASESECTOR 000000 1D7", "READPAGE 040000",
                     "AAI64 000000 " + "00" * 65, "AAI256 000000 " + "00" * 257,
                     "PINS 6 6", "REGWRITE 00 01 WRITE 35 FF", "READPAGE 100000000",
-                    "@Z234ABCD HELLO", "PAGE64 000001 " + "00" * 64]
+                    "@Z234ABCD HELLO", "PAGE64 000001 " + "00" * 64,
+                    "ENEOPEN KB901X EXTRA", "ENEOPEN " + "X"*30,
+                    "ENEREADPAGE 100000000", "ENEERASEPAGE 00000 garbage",
+                    "ENEWRITEPAGE 00000 " + "00"*129]
         for command in commands:
             with self.subTest(command=command[:50]):
                 trace = self.run_c("command", command)

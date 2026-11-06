@@ -30,7 +30,7 @@ class DeviceSession:
         if hasattr(self.bus, "capabilities"):
             self.bus.capabilities()
         if self.ene:
-            self.ec = self.ene_factory(self.bus)
+            self.ec = self.ene_factory(self.bus, family=self.profile.name)
         else:
             validate_ite_pins(*self.pins)
             self.bus.pins(*self.pins)

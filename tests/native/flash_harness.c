@@ -54,6 +54,7 @@ void waveform(bool settle,unsigned frequency) { (void)settle; (void)frequency; }
 void wave_at_power_on(void) {}
 void enter_dbgr_fast(void) {}
 bool ene_open(uint8_t *hw,uint8_t *id) { *hw=0; *id=0; return false; }
+bool ene_open_family(const char *family,uint8_t *hw,uint8_t *id) { (void)family; return ene_open(hw,id); }
 bool ene_close(void) { return true; }
 bool ene_is_open(void) { return false; }
 bool ene_read_page(uint32_t a,uint8_t d[128]) { (void)a;(void)d;return false; }

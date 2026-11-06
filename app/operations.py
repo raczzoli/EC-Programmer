@@ -14,14 +14,15 @@ from .transport import PicoTransport, TransportError
 READ_SIZES = FLASH_SIZES
 
 
-def resolve_read_size(size):
-    if size not in READ_SIZES:
+def resolve_read_size(size, profile=None):
+    if size not in getattr(profile, "flash_sizes", READ_SIZES):
         raise ValueError("Select a flash size before reading.")
     return size
 
 
 class Worker(QObject):
     progress = Signal(int)
+    phase = Signal(str)
     status = Signal(str)
     warning = Signal(str)
     power_cycle_needed = Signal()
@@ -52,6 +53,7 @@ class Worker(QObject):
         return f"Programming EC flash ({protocol.name}, {protocol.program_method}, USB fallback)..."
 
     def stage(self, name, operation):
+        self.phase.emit(name)
         started = time.monotonic()
         result = operation()
         self.status.emit(f"{name} finished in {time.monotonic()-started:.1f} s.")
@@ -71,7 +73,7 @@ class Worker(QObject):
             else:
                 image = None
                 if self.action in ("read", "write", "erase"):
-                    resolve_read_size(self.read_size)
+                    resolve_read_size(self.read_size, self.profile)
                 if self.action == "write":
                     image = Path(self.image_path).read_bytes()
                     if len(image) != self.read_size:

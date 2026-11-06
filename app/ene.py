@@ -1,11 +1,10 @@
 # SPDX-FileCopyrightText: 2026 R89 Repairs and contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-"""ENE KB9052 EDI flash access through the bundled Pico SPI0 firmware.
+"""Shared ENE EDI eFlash access through the bundled Pico SPI0 firmware.
 
 The EDI register/flash sequence follows flashrom's GPL-2.0-or-later edi.c.
-The B/D identification pairs are from the KB9052 flashrom extension by
-Jack O'Neo; these signatures identify the interface, not the PCB firmware.
+Compatibility groups and sources are documented in docs/ENE.md.
 """
 
 import re
@@ -13,43 +12,49 @@ from dataclasses import dataclass
 
 from .ec import FlashError
 from .transport import TransportError
-
-PAGE_SIZE = 128
-FLASH_SIZE = 128 * 1024
-SUPPORTED_IDS = {(0xB0, 0x0B), (0xD0, 0x0B)}
+from .ene_families import PAGE_SIZE, ene_family
 
 
 @dataclass(frozen=True)
 class EneFlashProtocol:
+    family: str
+    identity: tuple[int, int]
     name: str = "ENE EDI eFlash"
     program_method: str = "ene_page"
 
 
 class EneEC:
-    def __init__(self, bus):
+    def __init__(self, bus, family="KB9052 (B/D)"):
         self.bus = bus
+        self.family = ene_family(family)
+        self.identity = None
 
     def enter_and_identify(self):
+        self.identity = None
         caps = self.bus.command("CAPS").split()
-        if "ENE_EDI" not in caps[1:]:
-            raise TransportError("Pico firmware does not support ENE EDI; install the new UF2")
-        answer = self.bus.command("ENEOPEN")
+        if not caps or caps[0] != "CAPS" or "ENE_EDI_V2" not in caps[1:]:
+            raise TransportError("Pico firmware needs ENE_EDI_V2 support; install the matching new UF2")
+        answer = self.bus.command(f"ENEOPEN {self.family.command}")
         match = re.fullmatch(r"ENEOPEN HW=([0-9A-F]{2}) EDI=([0-9A-F]{2})", answer)
         if not match:
             raise TransportError(f"Invalid ENE response: {answer}")
         identity = (int(match[1], 16), int(match[2], 16))
-        if identity not in SUPPORTED_IDS:
-            raise FlashError(f"Unsupported ENE HW/EDI ID: {identity[0]:02X}/{identity[1]:02X}")
+        if identity not in self.family.identities:
+            raise FlashError(f"ENE HW/EDI {identity[0]:02X}/{identity[1]:02X} does not match {self.family.name}")
+        self.identity = identity
         return identity
 
     def flash_protocol(self, identity):
-        if identity not in SUPPORTED_IDS:
+        if self.identity is None or identity != self.identity:
             raise FlashError("ENE identity changed")
-        return EneFlashProtocol()
+        return EneFlashProtocol(self.family.name, identity)
 
     def _check_size(self, size):
-        if size != FLASH_SIZE:
-            raise FlashError("KB9052 EDI supports only a 128 KiB image")
+        if self.identity is None:
+            raise FlashError("Connect to the ENE before accessing flash")
+        if size not in self.family.sizes:
+            allowed = "/".join(str(value // 1024) for value in self.family.sizes)
+            raise FlashError(f"{self.family.name} supports selected ranges of {allowed} KiB")
 
     def _read_page(self, address):
         answer = self.bus.command(f"ENEREADPAGE {address:05X}")
@@ -75,9 +80,9 @@ class EneEC:
                 raise TransportError(f"Invalid ENE erase response at 0x{address:05X}: {answer}")
             progress(address + PAGE_SIZE, size)
 
-    @staticmethod
-    def _check_protocol(protocol):
-        if not isinstance(protocol, EneFlashProtocol):
+    def _check_protocol(self, protocol):
+        if (not isinstance(protocol, EneFlashProtocol) or self.identity is None or
+                protocol != self.flash_protocol(self.identity)):
             raise FlashError("Invalid ENE flash protocol")
 
     def write_flash(self, data, protocol, progress=lambda done, total: None):

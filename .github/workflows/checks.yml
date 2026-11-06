@@ -31,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        board: [pico, pico_w, pico2, pico2_w, waveshare_rp2040_zero, waveshare_rp2350_zero, waveshare_rp2350_usb_a, seeed_xiao_rp2040, seeed_xiao_rp2350]
+        board: [pico, pico_w, pico2, pico2_w, waveshare_rp2040_zero, waveshare_rp2350_zero, waveshare_rp2350_tiny, waveshare_rp2350_usb_a, seeed_xiao_rp2040, seeed_xiao_rp2350]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4

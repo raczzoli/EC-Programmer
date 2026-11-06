@@ -8,6 +8,7 @@
 
 /* SPI0: GP4=MISO, GP5=CS, GP6=CLK, GP7=MOSI. */
 bool ene_open(uint8_t *hwversion, uint8_t *ediid);
+bool ene_open_family(const char *family, uint8_t *hwversion, uint8_t *ediid);
 bool ene_close(void);
 bool ene_is_open(void);
 bool ene_read_page(uint32_t address, uint8_t data[128]);
