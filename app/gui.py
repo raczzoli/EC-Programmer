@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, QTimer, Qt
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFrame, QGroupBox, QHBoxLayout,
+    QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QGroupBox, QHBoxLayout,
     QLabel, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
     QScrollArea, QSizePolicy, QSpinBox, QVBoxLayout, QWidget,
 )
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 from .ec import save_new
 from .models import FAMILIES_BY_MANUFACTURER
 from .ene_models import ene_model
+from .wiring_diagram import WiringDiagram
 from .style import STYLESHEET
 from .transport import ports
 
@@ -120,14 +121,11 @@ class Window(QMainWindow):
         row.addWidget(self.scl)
         for spin in (self.sda, self.scl):
             spin.lineEdit().setTextMargins(10, 0, 2, 0)
-        self.ene_wiring = QLabel("Select an ENE model to see its EC pin numbers.")
-        self.ene_wiring.setWordWrap(True)
+        self.ene_wiring = QLabel()
         self.ene_wiring.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.ene_wiring.setToolTip(
-            "EC KSI7 -> GP4, KSI4 -> GP5, KSI5 -> GP6, KSI6 -> GP7; "
-            "Common Pico/board GND; confirm the EC programming-mode strap (e.g. KSO3) "
-            "from its schematic. Power the EC from its board. Experimental ENE support."
-        )
+        self.ene_wiring.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse |
+                                                Qt.TextInteractionFlag.LinksAccessibleByKeyboard)
+        self.ene_wiring.linkActivated.connect(self.show_wiring_diagram)
         self.ene_wiring.hide()
         row.addWidget(QLabel("Size"))
         self.flash_size = QSpinBox()
@@ -306,13 +304,38 @@ class Window(QMainWindow):
         self.update_identity_label()
         self.update_buttons()
 
+    def create_wiring_dialog(self):
+        profile = self.model.currentData()
+        model = ene_model(profile.name) if profile and profile.transport == "ene_edi" else None
+        if model is None:
+            return None
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"{model.name} - Wiring diagram")
+        dialog.setStyleSheet("QDialog { background: #131e30; }")
+        layout = QVBoxLayout(dialog)
+        diagram = WiringDiagram()
+        diagram.set_model(model)
+        layout.addWidget(diagram)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.resize(900, 300)
+        return dialog
+
+    def show_wiring_diagram(self, _link=None):
+        dialog = self.create_wiring_dialog()
+        if dialog is not None:
+            dialog.exec()
+            dialog.deleteLater()
+
     def on_model_changed(self):
         # Known capacities are fixed by the group. Preserve the user's ITE
         # value separately so switching through ENE cannot overwrite it.
         profile = self.model.currentData()
         model = ene_model(profile.name) if profile and profile.transport == "ene_edi" else None
-        self.ene_wiring.setText(model.wiring if model else
-                                "Select an ENE model to see its EC pin numbers.")
+        self.ene_wiring.setVisible(model is not None)
+        self.ene_wiring.setText(
+            '<a href="wiring" style="color: #38bdf8;">View wiring diagram</a>' if model else "")
         self.ene_wiring.setToolTip(
             (f"Source: {model.source}. " if model else "") +
             "EC package pin numbers, not keyboard connector positions. "
@@ -440,6 +463,8 @@ class Window(QMainWindow):
     def set_progress_phase(self, phase):
         color = {"Erase": "#dc2626", "Programming": "#ea580c"}.get(phase, "#15803d")
         self.progress.setStyleSheet(f"QProgressBar::chunk {{ background: {color}; }}")
+        label = {"Programming": "Write", "Verification": "Verify"}.get(phase, phase)
+        self.progress.setFormat(f"{label}: %p%")
 
     def show_power_cycle_prompt(self):
         continuation = ("Connection will continue automatically." if

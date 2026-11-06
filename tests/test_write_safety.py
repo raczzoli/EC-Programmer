@@ -38,6 +38,9 @@ class WriteSafetyTests(unittest.TestCase):
         worker.failed.connect(failed.append)
         self.phases = []
         worker.phase.connect(self.phases.append)
+        self.progress_events = []
+        worker.phase.connect(lambda phase: self.progress_events.append((phase, None)))
+        worker.progress.connect(lambda value: self.progress_events.append((self.phases[-1], value)))
         worker.finished.connect(lambda *args: self.terminal_events.append("finished"))
         worker.failed.connect(lambda *args: self.terminal_events.append("failed"))
         worker.warning.connect(self.warnings.append)
@@ -84,6 +87,8 @@ class WriteSafetyTests(unittest.TestCase):
             self.assertEqual(events, ["profile", "erase", "write", "verify_image"])
             self.assertEqual(finished, [("write", (0x8227, 2))])
             self.assertEqual(self.phases, ["Erase", "Programming", "Verification"])
+            self.assertEqual(self.progress_events, [(phase, value)
+                for phase in ("Erase", "Programming", "Verification") for value in (None, 0, 100)])
 
     def test_erase_only_erases_without_read_or_verify(self):
         with tempfile.TemporaryDirectory() as directory:

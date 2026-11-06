@@ -54,6 +54,7 @@ class Worker(QObject):
 
     def stage(self, name, operation):
         self.phase.emit(name)
+        self.progress.emit(0)
         started = time.monotonic()
         result = operation()
         self.status.emit(f"{name} finished in {time.monotonic()-started:.1f} s.")
@@ -119,16 +120,15 @@ class Worker(QObject):
                         self.status.emit(f"Image SHA-256 {hashlib.sha256(image).hexdigest()}")
                     self.status.emit("Erasing EC flash...")
                     destructive_started = True
-                    erase_end = 40 if image is not None else 100
                     self.stage("Erase", lambda: ec.erase_flash(self.read_size, protocol,
-                        lambda done,total: self.progress.emit(done*erase_end//total)))
+                        lambda done,total: self.progress.emit(done*100//total)))
                     if image is not None:
                         self.status.emit(label)
                         self.stage("Programming", lambda: ec.write_flash(image, protocol,
-                            lambda done,total: self.progress.emit(40+done*40//total)))
+                            lambda done,total: self.progress.emit(done*100//total)))
                         self.status.emit("Verifying every byte...")
                         self.stage("Verification", lambda: ec.verify_flash(image,
-                            lambda done,total: self.progress.emit(80+done*20//total)))
+                            lambda done,total: self.progress.emit(done*100//total)))
                     result = identity
                 else:
                     raise ValueError(f"Unknown action: {self.action}")

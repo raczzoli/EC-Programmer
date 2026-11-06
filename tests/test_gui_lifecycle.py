@@ -137,13 +137,18 @@ class GuiLifecycleTests(unittest.TestCase):
 
     def test_model_pinout_and_phase_colors(self):
         self.window.manufacturer.setCurrentText("ENE")
-        self.assertNotIn("EC pin", self.window.ene_wiring.text().replace("EC pin numbers", ""))
+        self.assertEqual(self.window.ene_wiring.text(), "")
+        self.assertIsNone(self.window.create_wiring_dialog())
         for model in ("KB9012QF", "KB9022Q", "KB9028Q", "KB9052QD"):
             self.window.model.setCurrentText(model)
-            text = self.window.ene_wiring.text()
-            self.assertIn(model, text)
-            self.assertIn("GP4 = EC pin 62", text)
-            self.assertIn("EC pin 42 (KSO3)", text)
+            self.assertIn("View wiring diagram", self.window.ene_wiring.text())
+            from app.wiring_diagram import WiringDiagram
+            dialog = self.window.create_wiring_dialog()
+            diagram = dialog.findChild(WiringDiagram)
+            self.assertEqual(diagram.model.name, model)
+            self.assertIn("GP4 = EC pin 62", diagram.accessibleName())
+            self.assertIn("EC pin 42 (KSO3)", diagram.accessibleName())
+            dialog.deleteLater()
         for phase, color in (("Read", "#15803d"), ("Erase", "#dc2626"),
                              ("Programming", "#ea580c"), ("Verification", "#15803d")):
             self.window.set_progress_phase(phase)

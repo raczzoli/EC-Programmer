@@ -51,8 +51,8 @@ power the EC from its board and connect a common ground.
 
 ### ENE
 
-Select the exact ENE model in **Model / Family**. The GUI shows its physical
-EC pin numbers below the selectors. The current catalog covers **LQFP-128**:
+Select the exact ENE model in **Model / Family**. Click **View wiring diagram** below the selectors to see its physical EC
+pin numbers, pin-1 orientation and Pico connections. The current catalog covers **LQFP-128**:
 
 | Pico | EC pin (KB9012QF, KB9022Q, KB9028Q, KB9052QD) |
 | --- | --- |
@@ -80,7 +80,8 @@ See [pinout sources and package scope](docs/ENE_PINOUTS.md) and
    - **Erase:** erases the flash.
 
 The progress bar is **green for Read/Verify**, **red for Erase**, and
-**orange for Programming**. Write changes color as each stage starts. Use **Read** first if
+**orange for Programming**. Each stage runs from **0 to 100%** independently; Write changes color and
+restarts the percentage for Erase, Programming and Verification. Use **Read** first if
 you want to keep a backup, and **Save log** to export the session log.
 
 ## Testing and feedback
