@@ -11,3 +11,7 @@ LICENSE text eol=lf
 *.txt text eol=lf
 *.png binary
 *.uf2 binary
+
+# Preserve packaged bytes so SHA256SUMS also matches source archives.
+release/** -text
+*.exe binary

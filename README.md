@@ -19,11 +19,17 @@ The names below match the **Manufacturer** and **Model / Family** selectors in t
 
 ## Download and setup
 
-1. Download the application and firmware from [GitHub Releases](https://github.com/raczzoli/EC-Programmer/releases).
-2. Put your Pico into **BOOTSEL** mode and copy the UF2 for your board to its USB drive.
-3. Connect the Pico through its USB data port and run **EC-Programmer.exe** from `app/`.
+1. Click **Code > Download ZIP** on this repository and extract the archive.
+2. Open **[release/app](release/app)** and run **EC-Programmer.exe**. No Python installation is needed.
+3. Put your Pico into **BOOTSEL** mode and copy the matching UF2 from **[release/pico-firmwares](release/pico-firmwares)** to its USB drive.
+4. Connect the Pico through its USB data port and select its COM port in the application.
 
-Firmware files are in `pico-firmwares/`. Builds are available for:
+The repository includes the current application, all firmware variants and their
+licenses in **[release/](release)**. Versioned packages are also available from
+[GitHub Releases](https://github.com/raczzoli/EC-Programmer/releases); those archives
+have `app/` and `pico-firmwares/` directly at their root.
+
+Builds are available for:
 
 - **Raspberry Pi:** Pico, Pico W, Pico 2 and Pico 2 W. Header-equipped variants use the corresponding base-board firmware.
 - **Waveshare:** RP2040-Zero, RP2350-Zero, RP2350-Tiny and RP2350-USB-A.

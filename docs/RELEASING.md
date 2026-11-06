@@ -18,12 +18,14 @@ release notes separately from automated tests.
 Before publishing:
 
 1. Review the source diff and run the builder successfully.
-2. Commit source, tests, docs and VERSION; push the intended branch.
+2. Commit source, tests, docs, VERSION and the current release/app and
+   release/pico-firmwares distribution with licenses and manifests; push the intended branch.
 3. Create a version tag on that commit.
 4. Package only app/, pico-firmwares/, README.txt, build-info.json and the hash
    manifest. Do not include older ZIPs or release notes from earlier builds.
 5. Publish a normal GitHub Release and upload the package and checksum file.
 
-The repository excludes release artifacts, local SDKs, research downloads and
-hardware-specific repair data. Never distribute customer dumps, laptop BIOS/EC
+The repository includes the current ready-to-use release so Code > Download ZIP
+contains both the EXE and UF2 files. Older ZIP archives, local SDKs, research
+downloads and hardware-specific repair data remain excluded. Never distribute customer dumps, laptop BIOS/EC
 images, driver installers or proprietary programming software with this project.

@@ -1,6 +1,6 @@
 # Local data and release artifacts
 /_private_archive/
-/release/
+/release/*
 /release-candidate/
 /research/
 /vendor/
@@ -37,3 +37,12 @@ cmake_install.cmake
 
 # Local editor settings
 /.vscode/
+
+# Current ready-to-use distribution, included in GitHub Download ZIP
+!/release/app/
+!/release/app/**
+!/release/pico-firmwares/
+!/release/pico-firmwares/**
+!/release/README.txt
+!/release/build-info.json
+!/release/SHA256SUMS.txt

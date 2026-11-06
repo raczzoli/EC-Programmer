@@ -1,0 +1,26 @@
+{
+  "version": "0.4.0",
+  "build_id": "8151907b42b3",
+  "source_sha256": "8151907b42b314537b7f4189846f8461c49212af2a682ff02fe9bdcdb1a2b162",
+  "hardware_validation": "pending",
+  "boards": [
+    "pico",
+    "pico_w",
+    "pico2",
+    "pico2_w",
+    "waveshare_rp2040_zero",
+    "waveshare_rp2350_tiny",
+    "waveshare_rp2350_zero",
+    "waveshare_rp2350_usb_a",
+    "seeed_xiao_rp2040",
+    "seeed_xiao_rp2350"
+  ],
+  "python": "3.14.8",
+  "packages": {
+    "PySide6": "6.12.0",
+    "pyserial": "3.5",
+    "pyinstaller": "6.22.3"
+  },
+  "gui_build_id": "c29242b24504",
+  "gui_source_sha256": "c29242b245042ffa5f7c0a12d432915315a3404ab8f2989825686051da64ffd6"
+}
