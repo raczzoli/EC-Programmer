@@ -34,6 +34,8 @@ ENE_MODELS = (
              "Compal LA-E892P rev 1A, sheet 37, UB1"),
     EneModel("KB9028Q", "KB902x", frozenset({(0xC0, 0x07)}),
              "MSI MS-16K2/17B1 rev 0B, EC U25, KB9028Q-C-RH"),
+    EneModel("KB902FQ C", "KB902FQ", frozenset(),
+             "ASUS X541NA rev 2.1 BoardView, U3001, KB902FQ C LQFP128"),
     EneModel("KB9052QD", "KB9052 (B/D)", frozenset({(0xD0, 0x0B)}),
              "Compal FH5LI LA-J801P rev 1.0, EC_ENE KB9052Q, KB9052Q-D_LQFP128"),
 )

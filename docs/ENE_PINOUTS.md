@@ -54,3 +54,14 @@ merely by extrapolating their family name.
 
 Add models to `app/ene_models.py` with a source, package, allowed identity and
 physical mapping. Reuse the protocol groups in `app/ene_families.py`.
+
+## KB902FQ C
+
+The GUI also exposes KB902FQ C, LQFP-128, with a provisional 128 KiB range.
+The supplied ASUS X541NA REV 2.1 BoardView File.fz BOM identifies U3001 as
+KB902FQ C. U3001 pins 59/60/61/62 are KSI4/5/6/7; pin 42 is KSO3.
+The same Pico wiring and diagram therefore apply. Board-specific alternate
+points are C2912.1 (59), C2913.5 (60), C2913.3 (61), C2914.7 (62), C2913.7 (42).
+Confirm continuity before applying X541NA component references to X541SA.
+The supplied BoardView is not redistributed. See ENE.md for the provisional
+identity rule; no KB902FQ hardware signature or successful flash test is claimed.

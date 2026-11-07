@@ -101,3 +101,19 @@ Physical validation still needs repeated matching reads and a complete
 erase/write/verify on representative boards, followed by a boot test with the
 programmer disconnected. Timing, board wiring and real watchdog behavior
 cannot be established by simulation.
+
+## KB902FQ C provisional support
+
+KB902FQ C reuses the common EDI engine with an assumed 128 KiB range and
+128-byte pages. `ENEOPEN KB902FQ` accepts a nonzero/non-FF hardware byte with
+EDIID 07, except known 160 KiB signatures A0/07 and F0/07. This is an explicit
+compatibility assumption, not a measured KB902FQ identity. The actual HW/EDI
+is displayed and retained for session-change detection. No watchdog override
+is applied. Existing exact-model identity checks remain unchanged.
+
+Pin mapping comes from the user-provided ASUS X541NA rev 2.1 FZ BoardView,
+whose BOM identifies U3001 as KB902FQ C, LQFP128. A published 128 KiB dump
+is supporting evidence for size, not a capacity probe:
+https://eletronicabr.com/en/files/file/34880-bios-notebook-asus-f540sa-xx183t-x540sa-and-kb902fq-rev-21-8mb/
+Real identification, full-range read and erase/write/verify remain untested.
+If the chip reports another EDI ID, capture it before extending this rule.

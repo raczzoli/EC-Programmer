@@ -39,7 +39,7 @@ class EneEC:
         if not match:
             raise TransportError(f"Invalid ENE response: {answer}")
         identity = (int(match[1], 16), int(match[2], 16))
-        if identity not in self.family.identities:
+        if not self.family.accepts_identity(identity):
             raise FlashError(f"ENE HW/EDI {identity[0]:02X}/{identity[1]:02X} does not match {self.family.name}")
         self.identity = identity
         return identity

@@ -15,6 +15,7 @@ The names below match the **Manufacturer** and **Model / Family** selectors in t
 | ENE | KB9012QF | Read, Write, Erase — experimental |
 | ENE | KB9022Q | Read, Write, Erase — experimental |
 | ENE | KB9028Q | Read, Write, Erase — experimental |
+| ENE | KB902FQ C | Read, Write, Erase (provisional 128 KiB) |
 | ENE | KB9052QD | Read, Write, Erase — experimental |
 
 ## Download and setup
@@ -60,7 +61,7 @@ power the EC from its board and connect a common ground.
 Select the exact ENE model in **Model / Family**. Click **View wiring diagram** below the selectors to see its physical EC
 pin numbers, pin-1 orientation and Pico connections. The current catalog covers **LQFP-128**:
 
-| Pico | EC pin (KB9012QF, KB9022Q, KB9028Q, KB9052QD) |
+| Pico | EC pin (KB9012QF, KB9022Q, KB9028Q, KB902FQ C, KB9052QD) |
 | --- | --- |
 | GP4 | 62 |
 | GP5 | 59 |

@@ -46,6 +46,18 @@ class NativeEneTests(unittest.TestCase):
                     self.assertEqual(trace[-1], "CLOSE=1 PINS_RELEASED")
                     self.assertIn("WDT=1 VALUE=48" if hw==0xF0 else "WDT=0 VALUE=00", trace[0])
 
+    def test_provisional_kb902fq_roundtrip_bounds_and_identity_retention(self):
+        # Synthetic identity: no measured KB902FQ hardware ID is available yet.
+        trace = self.run_c("KB902FQ", 0x42, 7)
+        self.assertIn("ROUNDTRIP 131072 ERASES=4 PROGRAMS=4 BOUNDS_OK", trace)
+        self.assertIn("WDT=0 VALUE=00", trace[0])
+        self.assertIn("ID_CHANGED", self.run_c("KB902FQ", 0x42, 7, "idchange"))
+        for hw, ediid in ((0, 7), (255, 7), (0xA0, 7), (0xF0, 7), (0x42, 4), (0x42, 11)):
+            with self.subTest(hw=hw, ediid=ediid):
+                trace = self.run_c("KB902FQ", hw, ediid)
+                self.assertTrue(trace[0].startswith("OPEN_ERROR EDI_"))
+                self.assertIn("RESET=0 WDT=0 CPU=0", trace[0])
+
     def test_wrong_group_and_unknown_revision_stop_before_cpu_or_flash_writes(self):
         for hw, ediid in ((0xC3, 0x04), (0x99, 0x0B)):
             trace = self.run_c(hw=hw, ediid=ediid)

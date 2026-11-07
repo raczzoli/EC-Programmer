@@ -11,10 +11,10 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual([f.name for f in FAMILIES], ["IT51xx", "IT55xx", "IT8xxx"])
         self.assertEqual([f.read_protocol for f in FAMILIES], [False, False, True])
         ene = FAMILIES_BY_MANUFACTURER["ENE"]
-        self.assertEqual([group.name for group in ene], ["KB9012QF", "KB9022Q", "KB9028Q", "KB9052QD"])
+        self.assertEqual([group.name for group in ene], ["KB9012QF", "KB9022Q", "KB9028Q", "KB902FQ C", "KB9052QD"])
         self.assertTrue(all(group.transport == "ene_edi" and group.read_protocol for group in ene))
         self.assertEqual(ene[-1].flash_sizes, (128*1024,))
-        self.assertEqual([group.fixed_flash_size for group in ene], [128*1024]*4)
+        self.assertEqual([group.fixed_flash_size for group in ene], [128*1024]*len(ene))
         self.assertTrue(all(group.fixed_flash_size is None for group in FAMILIES))
 
 

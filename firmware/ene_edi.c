@@ -44,6 +44,10 @@ static const edi_variant variants[] = {
     {"KB9542GF", 0xa0, 0x07, 160u * 1024u, false},
     {"KB9542GF", 0xf0, 0x07, 160u * 1024u, true},
 };
+/* Explicit provisional model: real HW ID is captured at connection time.
+ * No new identity is asserted as verified; only the base EDI-07 engine is used.
+ */
+static edi_variant provisional = {"KB902FQ", 0, 0x07, 128u * 1024u, false};
 static const edi_variant *selected;
 static bool active;
 static const char *error_text = "EDI_ERROR";
@@ -155,7 +159,8 @@ bool ene_open(uint8_t *hwversion, uint8_t *ediid) {
     return ene_open_family("KB9052", hwversion, ediid);
 }
 bool ene_open_family(const char *family, uint8_t *hwversion, uint8_t *ediid) {
-    bool known_family = false, reset_attempted = false;
+    bool provisional_model = !strcmp(family, "KB902FQ");
+    bool known_family = provisional_model, reset_attempted = false;
     for (unsigned i = 0; i < sizeof variants / sizeof variants[0]; ++i)
         if (!strcmp(family, variants[i].family)) known_family = true;
     if (!known_family) { error_text = "EDI_FAMILY"; return false; }
@@ -182,6 +187,15 @@ bool ene_open_family(const char *family, uint8_t *hwversion, uint8_t *ediid) {
         (void)edi_read(EDI_HWVERSION, &ignored); /* First clock enables EDI. */
         if (edi_read(EDI_HWVERSION, hwversion) && edi_read(EDI_EDIID, ediid) &&
             *hwversion != 0 && *hwversion != 0xff && *ediid != 0 && *ediid != 0xff) {
+            if (provisional_model) {
+                /* Known 160-KiB signatures must not enter this 128-KiB path. */
+                if (*ediid != 0x07 || *hwversion == 0xa0 || *hwversion == 0xf0) {
+                    error_text = "EDI_UNSUPPORTED_ID"; goto fail;
+                }
+                provisional.hw = *hwversion;
+                selected = &provisional;
+                break;
+            }
             for (unsigned i = 0; i < sizeof variants / sizeof variants[0]; ++i) {
                 if (*hwversion == variants[i].hw && *ediid == variants[i].id) {
                     if (strcmp(family, variants[i].family)) {

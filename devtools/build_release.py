@@ -150,7 +150,7 @@ def main():
         "Read saves after completion. Write erases, programs and verifies; no automatic backup.\n"
         "Size: numeric/manual for ITE (64/128/192/256 KiB); automatic and locked for ENE.\n"
         "ENE is experimental. GP4 DO, GP5 CS, GP6 CLK, GP7 DI, common GND; confirm target strap/pins.\n"
-        "ENE models: KB9012QF, KB9022Q, KB9028Q, KB9052QD (128 KiB).\n"
+        "ENE models: KB9012QF, KB9022Q, KB9028Q, KB902FQ C (provisional), KB9052QD (128 KiB).\n"
         "Source and instructions: https://github.com/raczzoli/EC-Programmer\n"
     )
     entries = []

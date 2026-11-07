@@ -109,7 +109,7 @@ class EneTests(unittest.TestCase):
     def test_exact_models_resolve_to_shared_protocol_and_check_identity(self):
         for model in ENE_MODELS:
             bus = FakeBus()
-            bus.identity = next(iter(model.identities))
+            bus.identity = next(iter(model.identities)) if model.identities else (0x42, 0x07)
             ec = EneEC(bus, model.name)
             self.assertEqual(ec.enter_and_identify(), bus.identity)
             family = next(f for f in ENE_FAMILIES if f.name == model.family)
@@ -118,6 +118,23 @@ class EneTests(unittest.TestCase):
         bus.identity = (0xC0, 0x07)
         with self.assertRaises(FlashError):
             EneEC(bus, "KB9022Q").enter_and_identify()
+
+    def test_provisional_kb902fq_identity_and_flash_range(self):
+        self.bus.identity = (0x42, 0x07)  # Synthetic, not a measured KB902FQ ID.
+        ec = EneEC(self.bus, "KB902FQ C")
+        protocol = ec.flash_protocol(ec.enter_and_identify())
+        image = bytes(range(256)) * 512
+        ec.erase_flash(FLASH_SIZE, protocol)
+        ec.write_flash(image, protocol)
+        ec.verify_flash(image)
+        self.assertEqual(ec.read_flash(FLASH_SIZE), image)
+        self.assertEqual(self.bus.memory[FLASH_SIZE:], bytes([0xA5]) * (32 * 1024))
+        with self.assertRaises(FlashError):
+            ec.read_flash(160 * 1024)
+        for identity in ((0, 7), (255, 7), (0xA0, 7), (0xF0, 7), (0x42, 4), (0x42, 11)):
+            self.bus.identity = identity
+            with self.subTest(identity=identity), self.assertRaises(FlashError):
+                EneEC(self.bus, "KB902FQ C").enter_and_identify()
 
     def test_wrong_family_rejected_even_if_firmware_reports_success(self):
         ec = EneEC(self.bus, family="KB901x")

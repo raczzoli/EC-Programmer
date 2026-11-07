@@ -19,8 +19,16 @@ class EneFamily:
     identities: frozenset[tuple[int, int]]
     sizes: tuple[int, ...]
 
+    def accepts_identity(self, identity):
+        if self.command == "KB902FQ":
+            # Provisional EDI-07 compatibility, not a measured chip signature.
+            hw, ediid = identity
+            return 0 < hw < 0xff and ediid == 0x07 and hw not in (0xA0, 0xF0)
+        return identity in self.identities
+
 
 ENE_FAMILIES = (
+    EneFamily("KB902FQ", "KB902FQ", frozenset(), (128 * 1024,)),
     EneFamily("KB901x", "KB901X", frozenset({(0xC3, 0x04)}), (128 * 1024,)),
     EneFamily("KB902x", "KB902X", frozenset({(0xB1, 0x07), (0xC0, 0x07)}), (128 * 1024,)),
     EneFamily("KB9052 (B/D)", "KB9052", frozenset({(0xB0, 0x0B), (0xD0, 0x0B)}), (128 * 1024,)),
